@@ -19,13 +19,8 @@
 #include "../../_components/time_component.h"
 #include "../../_components/input_component.h"
 #include "../../_components/sockets_component.h"
+#include "../../_components/csi_udp_sender.h"
 
-/*
- * The examples use WiFi configuration that you can set via 'idf.py menuconfig'.
- *
- * If you'd rather not, just change the below entries to strings with
- * the config you want - ie #define ESP_WIFI_SSID "mywifissid"
- */
 #define ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
 #define ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
 #define MAX_STA_CONN       16
@@ -60,7 +55,6 @@
 #define SEND_CSI_TO_SD 0
 #endif
 
-/* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
 
 static const char *TAG = "Active CSI collection (AP)";
@@ -116,6 +110,14 @@ void softap_init() {
     esp_wifi_set_ps(WIFI_PS_NONE);
 
     ESP_LOGI(TAG, "softap_init finished. SSID:%s password:%s", ESP_WIFI_SSID, ESP_WIFI_PASS);
+
+    // Unlike STA mode, the AP's own netif has a valid IP (gateway address,
+    // default 192.168.4.1) as soon as esp_wifi_start() succeeds -- no need
+    // to wait for a "got IP" event the way active_sta does. Safe to open
+    // the UDP socket right here.
+#if CONFIG_SEND_CSI_TO_UDP
+    csi_udp_sender_init();
+#endif
 }
 
 void config_print() {
@@ -135,6 +137,11 @@ void config_print() {
     printf("SHOULD_COLLECT_ONLY_LLTF: %d\n", SHOULD_COLLECT_ONLY_LLTF);
     printf("SEND_CSI_TO_SERIAL: %d\n", SEND_CSI_TO_SERIAL);
     printf("SEND_CSI_TO_SD: %d\n", SEND_CSI_TO_SD);
+#if CONFIG_SEND_CSI_TO_UDP
+    printf("SEND_CSI_TO_UDP: 1 (%s:%d)\n", CONFIG_UDP_TARGET_IP, CONFIG_UDP_TARGET_PORT);
+#else
+    printf("SEND_CSI_TO_UDP: 0\n");
+#endif
     printf("-----------------------\n");
     printf("\n\n\n\n\n\n\n\n");
 }
