@@ -64,10 +64,7 @@
 #endif
 
 static EventGroupHandle_t s_wifi_event_group;
-static esp_netif_t *s_sta_netif = NULL;   // <-- add
-const int WIFI_CONNECTED_BIT = BIT0;
-
-static EventGroupHandle_t s_wifi_event_group;
+static esp_netif_t *s_sta_netif = NULL;
 const int WIFI_CONNECTED_BIT = BIT0;
 
 static const char *TAG = "Active CSI collection (Station)";
