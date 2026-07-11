@@ -209,8 +209,8 @@ apply_toolkit_overlay() {
     local files=(
         "_components/csi_component.h"
         "_components/csi_udp_sender.h"
-        "active_sta/main/main.cc"
-        "active_sta/main/Kconfig.projbuild"
+        "active_ap/main/main.cc"
+        "active_ap/main/Kconfig.projbuild"
     )
 
     for rel_path in "${files[@]}"; do
@@ -251,7 +251,7 @@ main() {
     # without needing to delete/re-clone third_party/esp32-csi-toolkit.
     apply_toolkit_overlay "${PROJECT_ROOT}/templates" "third_party/esp32-csi-toolkit"
 
-    cd "third_party/esp32-csi-toolkit/active_sta" # UDP forwarding requires a real STA connection with an IP
+    cd "third_party/esp32-csi-toolkit/active_ap" # UDP forwarding requires a real STA connection with an IP
 
     # Run ESP build based on installed ESP-IDF version
     if [ "$idf_major" -ge 5 ]; then
