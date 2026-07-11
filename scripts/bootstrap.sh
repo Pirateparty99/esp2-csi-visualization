@@ -22,7 +22,7 @@ else
     echo "ESP-IDF version ${ESP_IDF_VERSION} found, continuing"
 fi
 
-echo "Building ESP32  CSI Toolkit firmware..."
-bash scripts/esp-idf/esp-csi-build.sh
+echo "Building ESP32 CSI Toolkit Active_STA firmware..."
+bash scripts/esp-idf/esp-csi-sta-build.sh
 
-echo "Done. Try: ./scripts/run_realtime.sh --source esp32"
+echo "Done."
