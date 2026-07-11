@@ -31,7 +31,7 @@ export -f have
 # clears any stale sdkconfig and runs `idf.py reconfigure` so the new
 # defaults take effect. Replaces the old `idf.py menuconfig` step.
 copy_sdkconfig_template() {
-    local template="${PROJECT_ROOT}/templates/active_sta/sdkconfig.defaults"
+    local template="${PROJECT_ROOT}/templates/esp32-csi-toolkit/active_sta/sdkconfig.defaults"
 
     if [ ! -f "$template" ]; then
         err "Template config not found at: $template"
