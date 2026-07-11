@@ -12,6 +12,15 @@
 
 #include "lwip/err.h"
 #include "lwip/sys.h"
+#include "lwip/err.h"
+#include "lwip/sys.h"
+#include "lwip/inet.h"          // <-- add: for ipaddr_addr()
+#include "lwip/err.h"
+#include "lwip/sys.h"
+#include "lwip/inet.h"     // <-- add: for ipaddr_addr()
+#include "esp_netif.h"      // <-- add: for esp_netif_set_ip_info/hostname
+#include "esp_netif.h"           // <-- add: for esp_netif_set_ip_info/hostname
+#include "dhcpserver/dhcpserver.h" // <-- add: for dhcps_lease_t
 
 #include "../../_components/nvs_component.h"
 #include "../../_components/sd_component.h"
@@ -55,6 +64,10 @@
 #endif
 
 static EventGroupHandle_t s_wifi_event_group;
+static esp_netif_t *s_sta_netif = NULL;   // <-- add
+const int WIFI_CONNECTED_BIT = BIT0;
+
+static EventGroupHandle_t s_wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
 
 static const char *TAG = "Active CSI collection (Station)";
@@ -84,6 +97,24 @@ esp_err_t esp_wifi_80211_tx(wifi_interface_t ifx, const void *buffer, int len, b
 static void event_handler(void* arg, esp_event_base_t event_base,
                           int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+#if CONFIG_STA_STATIC_IP_ENABLE
+        ESP_ERROR_CHECK(esp_netif_dhcpc_stop(s_sta_netif));
+
+        esp_netif_ip_info_t sta_ip_info = {0};
+        sta_ip_info.ip.addr      = ipaddr_addr(CONFIG_STA_IP_ADDR);
+        sta_ip_info.gw.addr      = ipaddr_addr(CONFIG_STA_GATEWAY_ADDR);
+        sta_ip_info.netmask.addr = ipaddr_addr(CONFIG_STA_NETMASK_ADDR);
+        ESP_ERROR_CHECK(esp_netif_set_ip_info(s_sta_netif, &sta_ip_info));
+
+        ESP_LOGI(TAG, "Static IP set: " IPSTR, IP2STR(&sta_ip_info.ip));
+
+        // With a static IP there's no DHCP handshake, so IP_EVENT_STA_GOT_IP
+        // never fires on its own -- set the bit and start the UDP sender here.
+        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+#if CONFIG_SEND_CSI_TO_UDP
+        csi_udp_sender_init();
+#endif
+#endif
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         ESP_LOGI(TAG, "Retry connecting to the AP");
@@ -167,6 +198,14 @@ void config_print() {
     printf("WIFI_CHANNEL: %d\n", WIFI_CHANNEL);
     printf("ESP_WIFI_SSID: %s\n", ESP_WIFI_SSID);
     printf("ESP_WIFI_PASSWORD: %s\n", ESP_WIFI_PASS);
+    printf("ESP_WIFI_PASSWORD: %s\n", ESP_WIFI_PASS);
+    printf("STA_HOSTNAME: %s\n", CONFIG_STA_HOSTNAME);
+#if CONFIG_STA_STATIC_IP_ENABLE
+    printf("STA_STATIC_IP: %s (gw %s / mask %s)\n",
+           CONFIG_STA_IP_ADDR, CONFIG_STA_GATEWAY_ADDR, CONFIG_STA_NETMASK_ADDR);
+#else
+    printf("STA_STATIC_IP: disabled (using DHCP)\n");
+#endif
     printf("PACKET_RATE: %i\n", CONFIG_PACKET_RATE);
     printf("SHOULD_COLLECT_CSI: %d\n", SHOULD_COLLECT_CSI);
     printf("SHOULD_COLLECT_ONLY_LLTF: %d\n", SHOULD_COLLECT_ONLY_LLTF);

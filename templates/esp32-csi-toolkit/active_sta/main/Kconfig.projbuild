@@ -14,6 +14,29 @@ menu "ESP32 CSI Tool Config"
         default "mypassword"
         help
             WiFi password (WPA or WPA2) for the example to use.
+    config STA_STATIC_IP_ENABLE
+        bool "Enable static IP for STA mode"
+        default n
+        help
+            Only relevant if this ESP32 is compiled as a station (active_sta)
+            rather than an AP. Leave disabled for AP-mode boards.
+    config STA_IP_ADDR
+        string "STA Static IP Address"
+        depends on STA_STATIC_IP_ENABLE
+        default "192.168.4.20"
+    config STA_GATEWAY_ADDR
+        string "STA Gateway Address"
+        depends on STA_STATIC_IP_ENABLE
+        default "192.168.4.1"
+    config STA_NETMASK_ADDR
+        string "STA Netmask"
+        depends on STA_STATIC_IP_ENABLE
+        default "255.255.255.0"
+    config STA_HOSTNAME
+        string "STA Hostname"
+        default "esp32-csi-node"
+        help
+            mDNS/DHCP hostname advertised by this device.
     config PACKET_RATE
         int "Packet TX Rate"
         default "100"
@@ -66,7 +89,7 @@ menu "ESP32 CSI Tool Config"
     config UDP_TARGET_IP
         depends on SEND_CSI_TO_UDP
         string "UDP target IP address"
-        default "192.168.1.100"
+        default "192.168.4.10"
         help
             IP address of the host machine running WiFi-3D-Fusion.
     config UDP_TARGET_PORT

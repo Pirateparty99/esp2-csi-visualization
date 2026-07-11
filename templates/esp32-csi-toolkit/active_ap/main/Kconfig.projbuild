@@ -14,6 +14,31 @@ menu "ESP32 CSI Tool Config"
         default "mypassword"
         help
             WiFi password (WPA or WPA2) for the example to use.
+    config AP_HOSTNAME
+        string "AP Hostname"
+        default "esp32-csi-ap"
+        help
+            Hostname this ESP32 advertises for its AP-mode interface.
+    config AP_IP_ADDR
+        string "AP IP Address"
+        default "192.168.4.1"
+        help
+            Static IP address assigned to this ESP32 in AP mode.
+            NOTE: if you change this, UDP_TARGET_IP below and your
+            WiFi-3D-Fusion fusion.yaml config must be updated to match
+            the new subnet.
+    config AP_NETMASK
+        string "AP Netmask"
+        default "255.255.255.0"
+    config AP_DHCP_LEASE_START
+        string "AP DHCP Lease Start"
+        default "192.168.4.10"
+        help
+            First IP address handed out to connecting stations.
+    config AP_DHCP_LEASE_END
+        string "AP DHCP Lease End"
+        default "192.168.4.50"
+    
     config SHOULD_COLLECT_CSI
         bool "Should this ESP32 collect and print CSI data?"
         default "y"
@@ -60,7 +85,7 @@ menu "ESP32 CSI Tool Config"
     config UDP_TARGET_IP
         depends on SEND_CSI_TO_UDP
         string "UDP target IP address"
-        default "192.168.4.2"
+        default "192.168.4.10"
         help
             IP address of the host machine running WiFi-3D-Fusion, as seen on
             this ESP32's own AP subnet.

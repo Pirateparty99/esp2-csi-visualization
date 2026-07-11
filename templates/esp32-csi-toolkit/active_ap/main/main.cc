@@ -76,7 +76,31 @@ void softap_init() {
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_ap();
+    esp_netif_t *ap_netif = esp_netif_create_default_wifi_ap();  // capture handle
+
+    // Set the AP's advertised hostname
+    ESP_ERROR_CHECK(esp_netif_set_hostname(ap_netif, CONFIG_AP_HOSTNAME));
+
+    // Override the default 192.168.4.0/24 subnet if configured to something else.
+    // Must stop the DHCP server before changing IP info, then restart it with
+    // a matching lease range.
+    ESP_ERROR_CHECK(esp_netif_dhcps_stop(ap_netif));
+
+    esp_netif_ip_info_t ap_ip_info = {0};
+    ap_ip_info.ip.addr      = ipaddr_addr(CONFIG_AP_IP_ADDR);
+    ap_ip_info.gw.addr      = ipaddr_addr(CONFIG_AP_IP_ADDR); // gateway = AP itself
+    ap_ip_info.netmask.addr = ipaddr_addr(CONFIG_AP_NETMASK);
+    ESP_ERROR_CHECK(esp_netif_set_ip_info(ap_netif, &ap_ip_info));
+
+    dhcps_lease_t dhcps_lease = {0};
+    dhcps_lease.enable       = true;
+    dhcps_lease.start_ip.addr = ipaddr_addr(CONFIG_AP_DHCP_LEASE_START);
+    dhcps_lease.end_ip.addr   = ipaddr_addr(CONFIG_AP_DHCP_LEASE_END);
+    ESP_ERROR_CHECK(esp_netif_dhcps_option(ap_netif, ESP_NETIF_OP_SET,
+                                            ESP_NETIF_REQUESTED_IP_ADDRESS,
+                                            &dhcps_lease, sizeof(dhcps_lease)));
+
+    ESP_ERROR_CHECK(esp_netif_dhcps_start(ap_netif));
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -133,6 +157,11 @@ void config_print() {
     printf("WIFI_CHANNEL: %d\n", WIFI_CHANNEL);
     printf("ESP_WIFI_SSID: %s\n", ESP_WIFI_SSID);
     printf("ESP_WIFI_PASSWORD: %s\n", ESP_WIFI_PASS);
+    printf("ESP_WIFI_SSID: %s\n", ESP_WIFI_SSID);
+    printf("ESP_WIFI_PASSWORD: %s\n", ESP_WIFI_PASS);
+    printf("AP_HOSTNAME: %s\n", CONFIG_AP_HOSTNAME);
+    printf("AP_IP_ADDR: %s\n", CONFIG_AP_IP_ADDR);
+    printf("AP_NETMASK: %s\n", CONFIG_AP_NETMASK);
     printf("SHOULD_COLLECT_CSI: %d\n", SHOULD_COLLECT_CSI);
     printf("SHOULD_COLLECT_ONLY_LLTF: %d\n", SHOULD_COLLECT_ONLY_LLTF);
     printf("SEND_CSI_TO_SERIAL: %d\n", SEND_CSI_TO_SERIAL);
