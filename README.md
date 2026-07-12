@@ -1,4 +1,4 @@
-# esp2-csi-visualization
+# esp32-csi-visualization
 This repo is intended to ingest CSI data from ESP32s to create a visualization of sensed objects. Very much a test/POC. Currently has one script that aims to map out a room and spit out a basic "heat map" of the room on the CLI every three seconds.  
 
 This repo adds UDP forwarding to the ESP CSI Toolkit project with templates to set the WiFi name/password and destination host/port.
