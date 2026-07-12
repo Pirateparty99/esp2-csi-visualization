@@ -12,4 +12,12 @@ export ESP_TARGET=esp32,esp32c6  # multiple targets
 source ${IDF_PATH}/export.sh
 
 cd third_party/esp32-csi-toolkit/active_sta/
+
 idf.py flash
+
+echo "Firmware flashed. Below is the board's MAC Address."
+
+printf '=%.0s' {1..100}
+echo ""
+esptool.py read_mac | grep -m 1 "MAC:"
+printf '=%.0s' {1..100}
