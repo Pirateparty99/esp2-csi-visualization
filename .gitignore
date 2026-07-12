@@ -11,4 +11,4 @@ eim_config.toml
 third_party
 nodes_config.json
 rti_baseline.json
-third_party/esp32-csi-toolkit
+templates/rti-nodes-config.json
