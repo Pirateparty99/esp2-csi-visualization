@@ -22,6 +22,8 @@ Usage:
      periodically (or dump JSON you can feed into a heatmap visualizer).
 """
 
+import os
+import shutil
 import socket
 import json
 import time
@@ -29,21 +31,67 @@ import argparse
 import numpy as np
 from collections import defaultdict
 
-STATIONS = {
-    "192.168.4.2": (4.0, 0.0),
-    "192.168.4.3": (4.0, 3.0),
-    "192.168.4.4": (0.0, 3.0),
-}
+# ---------------------------------------------------------------------------
+# Node positions are loaded from an external JSON file (default:
+# templates/rti-nodes-config.json), NOT hardcoded here, so MAC addresses/IPs
+# can be kept out of version control. Add rti-nodes-config.json to your
+# .gitignore.
+#
+# Expected format:
+# {
+#   "stations": {
+#     "192.168.4.2": [4.0, 0.0],
+#     "192.168.4.3": [4.0, 3.0]
+#   },
+#   "transmitters": {
+#     "a1:b2:c3:d4:e5:00": [0.0, 0.0],
+#     "00:e4:d4:c3:b2:a1": [4.0, 0.0]
+#   }
+# }
+# ---------------------------------------------------------------------------
+NODES_CONFIG_PATH = "templates/rti-nodes-config.json"
 
-TRANSMITTERS = {
-    "e4:65:b8:0f:3e:e5": (0.0, 0.0),
-}
 
+def load_nodes_config(path):
+    example_path = path.replace(".json", ".example.json")
+
+    if not os.path.exists(path):
+        if os.path.exists(example_path):
+            shutil.copy(example_path, path)
+            print(
+                f"\n[setup] '{path}' didn't exist yet — copied it from "
+                f"'{example_path}'."
+            )
+            print(
+                f"[setup] Open '{path}' now and fill in your real IPs, "
+                f"MAC addresses, and measured positions."
+            )
+            input("[setup] Press Enter once you've saved your edits to continue... ")
+        else:
+            raise FileNotFoundError(
+                f"\n\nNode config file '{path}' not found, and no example "
+                f"template '{example_path}' exists to copy from.\n"
+                f"Create '{path}' manually (see the comment block above "
+                f"load_nodes_config in this script for the expected format), "
+                f"and add it to your .gitignore to keep MAC addresses out of "
+                f"the repo.\n"
+            )
+
+    with open(path, "r") as f:
+        raw = json.load(f)
+    stations = {ip: tuple(pos) for ip, pos in raw.get("stations", {}).items()}
+    transmitters = {
+        mac.lower(): tuple(pos) for mac, pos in raw.get("transmitters", {}).items()
+    }
+    return stations, transmitters
+
+
+STATIONS, TRANSMITTERS = load_nodes_config(NODES_CONFIG_PATH)
 IP_TO_POS = STATIONS
-MAC_TO_POS = {mac.lower(): pos for mac, pos in TRANSMITTERS.items()}
+MAC_TO_POS = TRANSMITTERS
 
-GRID_RESOLUTION = 0.1   # meters per pixel
-ELLIPSE_WIDTH = 1.0     # lambda parameter (meters) - wider = smoother/coarser image
+GRID_RESOLUTION = 0.1  # meters per pixel
+ELLIPSE_WIDTH = 1.0  # lambda parameter (meters) - wider = smoother/coarser image
 
 
 def amplitude_from_csi(csi_list):
@@ -118,8 +166,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=5566)
     parser.add_argument("--bind", type=str, default="0.0.0.0")
-    parser.add_argument("--calibrate", action="store_true",
-                         help="Record baseline amplitudes with an EMPTY room")
+    parser.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="Record baseline amplitudes with an EMPTY room",
+    )
     parser.add_argument("--calibrate-seconds", type=int, default=20)
     parser.add_argument("--room-width", type=float, default=4.0, help="meters")
     parser.add_argument("--room-height", type=float, default=3.0, help="meters")
@@ -136,7 +187,9 @@ def main():
     xs, ys = build_room_grid(args.room_width, args.room_height, GRID_RESOLUTION)
 
     if args.calibrate:
-        print(f"[aggregator] CALIBRATING for {args.calibrate_seconds}s — keep the room EMPTY.")
+        print(
+            f"[aggregator] CALIBRATING for {args.calibrate_seconds}s — keep the room EMPTY."
+        )
         end_time = time.time() + args.calibrate_seconds
         sock.settimeout(1.0)
         while time.time() < end_time:
@@ -169,9 +222,13 @@ def main():
         for k, v in raw.items():
             tx_str, rx_str = k.split("|")
             baseline[(eval(tx_str), eval(rx_str))] = v
-        print(f"[aggregator] Loaded {len(baseline)} baseline links from rti_baseline.json")
+        print(
+            f"[aggregator] Loaded {len(baseline)} baseline links from rti_baseline.json"
+        )
     except FileNotFoundError:
-        print("[aggregator] WARNING: no baseline found. Run with --calibrate first for meaningful results.")
+        print(
+            "[aggregator] WARNING: no baseline found. Run with --calibrate first for meaningful results."
+        )
 
     sock.settimeout(1.0)
     last_image_time = time.time()
@@ -198,20 +255,38 @@ def main():
             if time.time() - last_image_time > 3.0:
                 links = [l for l in live_amps.keys() if l in baseline]
                 if len(links) >= 3:
-                    deviations = np.array([
-                        baseline[l] - float(np.mean(live_amps[l])) for l in links
-                    ], dtype=np.float32)
+                    deviations = np.array(
+                        [baseline[l] - float(np.mean(live_amps[l])) for l in links],
+                        dtype=np.float32,
+                    )
                     W = rti_weight_matrix(links, xs, ys, ELLIPSE_WIDTH)
                     image = reconstruct_image(W, deviations)
                     grid = image.reshape(len(xs), len(ys))
                     # Print a crude ASCII heatmap for a quick sanity check
-                    print(f"\n[aggregator] --- Room image ({len(links)} active links) ---")
+                    print(
+                        f"\n[aggregator] --- Room image ({len(links)} active links) ---"
+                    )
+                    print(
+                        f"[aggregator] raw deviation stats: min={grid.min():.4f} max={grid.max():.4f} "
+                        f"std={grid.std():.4f} range={grid.ptp():.4f}"
+                    )
+                    print(
+                        f"[aggregator] link deviations: "
+                        + ", ".join(f"{l}={d:.3f}" for l, d in zip(links, deviations))
+                    )
                     normed = (grid - grid.min()) / (grid.ptp() + 1e-6)
                     chars = " .:-=+*#%@"
                     for row in normed.T[::-1]:
-                        print("".join(chars[min(int(v * (len(chars) - 1)), len(chars) - 1)] for v in row))
+                        print(
+                            "".join(
+                                chars[min(int(v * (len(chars) - 1)), len(chars) - 1)]
+                                for v in row
+                            )
+                        )
                 else:
-                    print(f"[aggregator] Only {len(links)} active links with baseline - need >=3 for imaging.")
+                    print(
+                        f"[aggregator] Only {len(links)} active links with baseline - need >=3 for imaging."
+                    )
                 live_amps.clear()
                 last_image_time = time.time()
     except KeyboardInterrupt:
