@@ -16,4 +16,26 @@ menu "ESP32 CSI Mesh Config"
     config MESH_AP_PASSWORD
         string "Mesh internal AP password (node-to-node auth)"
         default "meshpass123"
+    config SEND_CSI_TO_MESH
+        depends on SHOULD_COLLECT_CSI
+        bool "Send CSI data over ESP-MESH to root node"
+        default "y"
+        help
+            Relays CSI data through the mesh network to the root node,
+            which forwards it via UDP. Mutually exclusive with
+            SEND_CSI_TO_UDP -- a mesh node doesn't have a direct route
+            to the host PC itself.
+    config UDP_TARGET_IP
+        depends on SEND_CSI_TO_UDP || SEND_CSI_TO_MESH
+        string "UDP target IP address"
+        default "192.168.4.10"
+        help
+            For SEND_CSI_TO_UDP: IP address of the host machine, as seen on
+            this ESP32's own AP subnet.
+            For SEND_CSI_TO_MESH: IP address the mesh root node forwards
+            received CSI data to via UDP.
+    config UDP_TARGET_PORT
+        depends on SEND_CSI_TO_UDP || SEND_CSI_TO_MESH
+        int "UDP target port"
+        default 5566
 endmenu
