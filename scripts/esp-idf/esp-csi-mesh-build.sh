@@ -207,16 +207,16 @@ apply_toolkit_overlay() {
     local repo_root="${2}"
 
     local files=(
-        "_components/csi_component.h"
-        "_components/mesh_root_rx.h"
-        "_components/mesh_csi_sender.h"
+        "esp32-csi-toolkit/_components/csi_component.h"
         "wifi-mesh/main/main.cc"
         "wifi-mesh/main/Kconfig.projbuild"
+        "wifi-mesh/_components/mesh_root_rx.h"
+        "wifi-mesh/_components/mesh_csi_sender.h"
         "wifi-mesh/_components/csi_udp_sender.h"
     )
 
     for rel_path in "${files[@]}"; do
-        local src="${template_root}/esp32-csi-toolkit/${rel_path}"
+        local src="${template_root}/${rel_path}"
         local dest="${repo_root}/${rel_path}"
 
         if [ ! -f "$src" ]; then
