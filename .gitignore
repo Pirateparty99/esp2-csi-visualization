@@ -3,7 +3,9 @@
 venv
 env
 
+tests
+rti_baseline.json
+
 # ESP-related files
 eim_config.toml
 third_party
-tests
