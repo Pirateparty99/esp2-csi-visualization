@@ -23,13 +23,60 @@ Before running any visualization the ESPs need to be flashed with the CSI-emmitt
 - Each STA running ESP32-CSI-Tool firmware, sending CSI JSON over UDP to a central aggregator
 - Physically measured (x, y) position (in meters) for every node, relative to a chosen room origin
 
+### Measuring node positions
+
+The script models your room as a flat 2D floor plan — every node needs an `(x, y)` coordinate in **meters**, where `x` and `y` are just distances along two perpendicular directions on the floor. Height (how far off the ground a node sits) isn't used; only where it is on the floor plan matters.
+
+**1. Pick an origin `(0, 0)`.** Any fixed corner of the room works — the easiest choice is whichever corner is most convenient to measure from repeatedly (e.g. the corner nearest an outlet, or nearest your AP). Mark it (tape, sticky note) so you can re-measure from the exact same spot later if a node moves.
+
+**2. Pick your axes.** From that corner:
+- `x` = distance along one wall (pick a direction, e.g. "left to right" facing into the room)
+- `y` = distance along the *other* wall, perpendicular to `x`
+
+It doesn't matter which wall is `x` vs `y`, as long as you're consistent for every node.
+
+**3. Measure each node's position.** For every ESP32 (and the AP), measure straight-line distance from the origin corner along the `x` wall, and separately along the `y` wall — basically "how far right, how far in," like grid coordinates on a floor plan. A tape measure or laser distance measurer works fine; accuracy to ~5-10cm is plenty.
+
+**Example:** a 4m × 3m room, origin at the front-left corner:
+```
+(0,3) ---------------------- (4,3)
+  |                             |
+  |         node C (2,1.5)      |
+  |                             |
+(0,0) ---------------------- (4,0)
+        ^ origin corner
+```
+Node at `(2.0, 1.5)` sits 2 meters along the x-wall and 1.5 meters along the y-wall from the origin corner — roughly the middle of the room.
+
+**Important:** `--room-width` and `--room-height` (used when running the script) must describe the same room, measured from the same origin, as your node positions — e.g. a 4m × 3m room needs `--room-width 4 --room-height 3`, and every node's `x` should fall within `[0, 4]` and every `y` within `[0, 3]`.
+
+**If you move a node**, re-measure its position, update it in your config file, and re-run `--calibrate` — a stale baseline measured against old positions will produce meaningless results.
+
 ### Configuration
-Edit the top of `rti_aggregator.py`:
+
+Node positions/MACs/IPs are kept in `templates/rti-nodes-config.json`, **not committed to the repo** (it's gitignored), so real hardware identifiers don't end up in version control. On first run, if this file doesn't exist yet, the script automatically copies `templates/rti-nodes-config.example.json` into place and pauses so you can fill it in before continuing.
+
+Format:
+```json
+{
+  "stations": {
+    "192.168.4.2": [4.0, 0.0]
+  },
+  "transmitters": {
+    "aa:bb:cc:dd:ee:ff": [0.0, 0.0]
+  }
+}
+```
+
+| Section | Description |
+|---|---|
+| `stations` | Each receiving node's IP and measured `(x, y)` position — nodes that report their own captured CSI back to the aggregator |
+| `transmitters` | Each transmitting node's MAC address and measured `(x, y)` position — devices whose frames get sniffed and reported by stations. For a single-AP setup, this is one entry (the AP's MAC). For a mesh setup, every mesh node needs an entry here **and** in `stations`, with matching positions, since each node both transmits and receives. |
+
+Other tunable constants (top of `rti_aggregator.py`):
 
 | Variable | Description |
 |---|---|
-| `STATIONS` | Dict of `{"station_ip": (x, y)}` — each receiving node's IP and measured position |
-| `TRANSMITTERS` | Dict of `{"mac_address": (x, y)}` — each transmitting node's MAC and measured position (for a single-AP setup, this is one entry: the AP's MAC) |
 | `GRID_RESOLUTION` | Meters per pixel in the reconstructed image (default `0.1`) |
 | `ELLIPSE_WIDTH` | RTI ellipse width parameter in meters — higher = smoother/coarser, more noise-tolerant (default `1.0`) |
 
