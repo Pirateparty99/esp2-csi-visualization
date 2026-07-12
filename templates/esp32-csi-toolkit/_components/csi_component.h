@@ -6,6 +6,7 @@
 #include <sstream>
 #include <iostream>
 #include "csi_udp_sender.h"
+#include "mesh_csi_sender.h"
 
 char *project_type;
 
@@ -83,6 +84,8 @@ int8_t *my_ptr;
 
 #if CONFIG_SEND_CSI_TO_UDP
     csi_udp_sender_send(&d);
+#elif CONFIG_SEND_CSI_TO_MESH
+    mesh_csi_sender_send(&d);
 #endif
 
     vTaskDelay(0);
