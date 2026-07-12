@@ -1,0 +1,19 @@
+menu "ESP32 CSI Mesh Config"
+    config MESH_ID
+        string "Mesh Network ID (6 bytes, hex)"
+        default "77:77:77:77:77:77"
+    config MESH_MAX_LAYER
+        int "Maximum mesh layer depth"
+        default 6
+    config MESH_ROUTER_SSID
+        string "Mesh root uplink SSID (external router, if any)"
+        default ""
+        help
+            Leave blank to run in no-router / standalone mesh mode.
+    config MESH_ROUTER_PASSWORD
+        string "Mesh root uplink password"
+        default ""
+    config MESH_AP_PASSWORD
+        string "Mesh internal AP password (node-to-node auth)"
+        default "meshpass123"
+endmenu
