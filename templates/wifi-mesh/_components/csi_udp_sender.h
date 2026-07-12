@@ -7,12 +7,6 @@
 #include "lwip/sockets.h"
 #include "sdkconfig.h"
 
-// Fallback defaults so this header compiles cleanly even in projects/
-// configs where SEND_CSI_TO_UDP isn't defined (e.g. `passive`, or
-// `active_sta` builds with the UDP option turned off). The functions
-// below are still only ever *called* from behind `#if CONFIG_SEND_CSI_TO_UDP`
-// guards at the call sites in csi_component.h / main.cc -- these defaults
-// just let the header parse/compile in isolation.
 #ifndef CONFIG_UDP_TARGET_IP
 #define CONFIG_UDP_TARGET_IP "0.0.0.0"
 #endif
@@ -48,12 +42,11 @@ static inline void csi_udp_sender_init(void) {
              CONFIG_UDP_TARGET_IP, CONFIG_UDP_TARGET_PORT);
 }
 
-static inline void csi_udp_sender_send(const wifi_csi_info_t *data) {
-    if (csi_udp_sock < 0) {
-        return;
-    }
-
-    static char json_buf[CSI_UDP_JSON_BUF_SIZE];
+// --- NEW: pure encoder, no socket dependency. Reusable by both the
+// direct-UDP path (active_ap/active_sta, unchanged) and the mesh path
+// (non-root nodes encode here, then hand bytes to esp_mesh_send()).
+// Returns the encoded length, or 0 on truncation/error.
+static inline int csi_to_json(const wifi_csi_info_t *data, char *out_buf, size_t out_buf_size) {
     int offset = 0;
 
     int n = data->len;
@@ -61,7 +54,7 @@ static inline void csi_udp_sender_send(const wifi_csi_info_t *data) {
         n = CSI_UDP_MAX_VALUES;
     }
 
-    offset += snprintf(json_buf + offset, CSI_UDP_JSON_BUF_SIZE - offset,
+    offset += snprintf(out_buf + offset, out_buf_size - offset,
         "{\"type\":\"CSI_DATA\",\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\","
         "\"rssi\":%d,\"len\":%d,\"csi\":[",
         data->mac[0], data->mac[1], data->mac[2],
@@ -70,16 +63,40 @@ static inline void csi_udp_sender_send(const wifi_csi_info_t *data) {
         data->len);
 
     for (int i = 0; i < n; i++) {
-        offset += snprintf(json_buf + offset, CSI_UDP_JSON_BUF_SIZE - offset,
+        offset += snprintf(out_buf + offset, out_buf_size - offset,
                             "%s%d", (i == 0 ? "" : ","), (int) data->buf[i]);
     }
 
-    offset += snprintf(json_buf + offset, CSI_UDP_JSON_BUF_SIZE - offset, "]}");
+    offset += snprintf(out_buf + offset, out_buf_size - offset, "]}");
 
-    int err = sendto(csi_udp_sock, json_buf, offset, 0,
+    if (offset < 0 || (size_t)offset >= out_buf_size) {
+        ESP_LOGE(CSI_UDP_TAG, "csi_to_json: buffer too small, payload truncated");
+        return 0;
+    }
+    return offset;
+}
+
+// --- NEW: raw transmit, no encoding. This is what the mesh root's
+// receive task calls directly with bytes it got from esp_mesh_recv() --
+// those bytes are already JSON, encoded by the relaying node's csi_to_json().
+static inline void csi_udp_sender_send_raw(const char *payload, size_t len) {
+    if (csi_udp_sock < 0) {
+        return;
+    }
+    int err = sendto(csi_udp_sock, payload, len, 0,
                       (struct sockaddr *) &csi_udp_dest_addr, sizeof(csi_udp_dest_addr));
     if (err < 0) {
         ESP_LOGE(CSI_UDP_TAG, "sendto failed: errno %d", errno);
+    }
+}
+
+// Unchanged signature/behavior for existing active_ap/active_sta callers --
+// now just a thin wrapper: encode, then send.
+static inline void csi_udp_sender_send(const wifi_csi_info_t *data) {
+    static char json_buf[CSI_UDP_JSON_BUF_SIZE];
+    int len = csi_to_json(data, json_buf, sizeof(json_buf));
+    if (len > 0) {
+        csi_udp_sender_send_raw(json_buf, (size_t)len);
     }
 }
 

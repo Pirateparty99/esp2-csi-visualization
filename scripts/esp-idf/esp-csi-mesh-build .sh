@@ -212,6 +212,7 @@ apply_toolkit_overlay() {
         "_components/mesh_csi_sender.h"
         "wifi-mesh/main/main.cc"
         "wifi-mesh/main/Kconfig.projbuild"
+        "wifi-mesh/_components/csi_udp_sender.h"
     )
 
     for rel_path in "${files[@]}"; do
