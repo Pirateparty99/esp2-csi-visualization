@@ -249,10 +249,10 @@ apply_toolkit_overlay() {
         # wifi-mesh all resolve here the same way).
         "esp32-csi-toolkit/_components/csi_component.h"
         "esp32-csi-toolkit/_components/csi_udp_sender.h"    
-        "wifi-mesh/main/main.cc"
-        "wifi-mesh/main/Kconfig.projbuild"
-        "wifi-mesh/_components/mesh_root_rx.h"
-        "wifi-mesh/_components/mesh_csi_sender.h"
+        "esp32-csi-toolkit/wifi-mesh/main/main.cc"
+        "esp32-csi-toolkit/wifi-mesh/main/Kconfig.projbuild"
+        "esp32-csi-toolkit/wifi-mesh/_components/mesh_root_rx.h"
+        "esp32-csi-toolkit/wifi-mesh/_components/mesh_csi_sender.h"
     )
 
     for rel_path in "${files[@]}"; do
