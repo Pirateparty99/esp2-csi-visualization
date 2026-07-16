@@ -20,7 +20,7 @@
 static const char *CSI_UDP_TAG = "csi_udp";
 static int csi_udp_sock = -1;
 static struct sockaddr_in csi_udp_dest_addr;
-#define CSI_UDP_MAX_VALUES    256
+#define CSI_UDP_MAX_VALUES    128
 #define CSI_UDP_JSON_BUF_SIZE 2048
 
 static inline void csi_udp_sender_init(void) {

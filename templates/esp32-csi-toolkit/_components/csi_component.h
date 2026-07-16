@@ -20,9 +20,10 @@ SemaphoreHandle_t mutex = xSemaphoreCreateMutex();
 
 void _wifi_csi_cb(void *ctx, wifi_csi_info_t *data) {
     xSemaphoreTake(mutex, portMAX_DELAY);
-    std::stringstream ss;
-
     wifi_csi_info_t d = data[0];
+
+#if CONFIG_SEND_CSI_TO_SERIAL
+    std::stringstream ss;
     char mac[20] = {0};
     sprintf(mac, "%02X:%02X:%02X:%02X:%02X:%02X", d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5]);
 
@@ -81,9 +82,22 @@ int8_t *my_ptr;
 
     printf(ss.str().c_str());
     fflush(stdout);
+#endif // CONFIG_SEND_CSI_TO_SERIAL
 
 #if CONFIG_SEND_CSI_TO_UDP
-    csi_udp_sender_send(&d);
+    {
+        // Rate-limit UDP sends: with multiple associated stations, CSI
+        // callbacks can fire far faster than the WiFi TX path / lwIP
+        // buffer pools can sustain a sendto() for each one. Cap to a
+        // sane rate instead of trying to send every single capture.
+        static int64_t s_last_send_us = 0;
+        const int64_t MIN_SEND_INTERVAL_US = 50000; // 50ms = 20Hz max
+        int64_t now_us = esp_timer_get_time();
+        if (now_us - s_last_send_us >= MIN_SEND_INTERVAL_US) {
+            s_last_send_us = now_us;
+            csi_udp_sender_send(&d);
+        }
+    }
 #elif CONFIG_SEND_CSI_TO_MESH
     mesh_csi_sender_send(&d);
 #endif
