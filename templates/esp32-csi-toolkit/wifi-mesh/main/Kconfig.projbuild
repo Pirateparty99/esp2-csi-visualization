@@ -28,7 +28,7 @@ menu "ESP32 CSI Mesh Config"
     config UDP_TARGET_IP
         depends on SEND_CSI_TO_UDP || SEND_CSI_TO_MESH
         string "UDP target IP address"
-        default "192.168.4.10"
+        default "192.168.4.1"
         help
             For SEND_CSI_TO_UDP: IP address of the host machine, as seen on
             this ESP32's own AP subnet.

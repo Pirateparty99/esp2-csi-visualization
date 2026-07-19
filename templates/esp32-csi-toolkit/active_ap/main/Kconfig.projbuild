@@ -32,12 +32,12 @@ menu "ESP32 CSI Tool Config"
         default "255.255.255.0"
     config AP_DHCP_LEASE_START
         string "AP DHCP Lease Start"
-        default "192.168.4.10"
+        default "192.168.4.100"
         help
             First IP address handed out to connecting stations.
     config AP_DHCP_LEASE_END
         string "AP DHCP Lease End"
-        default "192.168.4.50"
+        default "192.168.4.190"
     
     config SHOULD_COLLECT_CSI
         bool "Should this ESP32 collect and print CSI data?"
@@ -85,7 +85,7 @@ menu "ESP32 CSI Tool Config"
     config UDP_TARGET_IP
         depends on SEND_CSI_TO_UDP
         string "UDP target IP address"
-        default "192.168.4.10"
+        default "192.168.4.1"
         help
             IP address of the host machine running WiFi-3D-Fusion, as seen on
             this ESP32's own AP subnet.
