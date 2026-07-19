@@ -11,7 +11,7 @@ export ESP_TARGET=esp32,esp32c3  # multiple targets
 
 source ${IDF_PATH}/export.sh
 
-cd third_party/esp32-csi-toolkit/active_sta/
+cd third_party/esp32-csi-toolkit/wifi-mesh/
 
 idf.py flash
 
