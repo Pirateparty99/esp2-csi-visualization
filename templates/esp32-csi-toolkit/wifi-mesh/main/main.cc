@@ -88,6 +88,16 @@ static void mesh_id_from_string(const char *str, mesh_addr_t *out) {
 
 static void mesh_event_handler(void *arg, esp_event_base_t event_base,
                                 int32_t event_id, void *event_data) {
+    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        // Only fires when using an external router uplink
+        // (CONFIG_MESH_ROUTER_SSID set). In no-router/standalone mode
+        // this never fires -- the root's own softAP interface handles
+        // the UDP send to the host PC instead.
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
+        ESP_LOGI(TAG, "Root got IP:" IPSTR, IP2STR(&event->ip_info.ip));
+        return;
+    }
+
     switch (event_id) {
         case MESH_EVENT_STARTED: {
             ESP_LOGI(TAG, "Mesh started, layer:%d", esp_mesh_get_layer());
@@ -102,15 +112,6 @@ static void mesh_event_handler(void *arg, esp_event_base_t event_base,
         }
         case MESH_EVENT_PARENT_DISCONNECTED: {
             ESP_LOGW(TAG, "Parent disconnected -- mesh will attempt reconnect");
-            break;
-        }
-        case MESH_EVENT_ROOT_GOT_IP: {
-            // Only fires when using an external router uplink
-            // (CONFIG_MESH_ROUTER_SSID set). In no-router/standalone mode
-            // this never fires -- the root's own softAP interface handles
-            // the UDP send to the host PC instead.
-            ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-            ESP_LOGI(TAG, "Root got IP:" IPSTR, IP2STR(&event->ip_info.ip));
             break;
         }
         case MESH_EVENT_ROOT_ADDRESS: {
@@ -146,7 +147,9 @@ void mesh_csi_init(void) {
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(esp_netif_create_default_wifi_mesh_sta());
+    static esp_netif_t *s_mesh_netif_sta = NULL;
+    static esp_netif_t *s_mesh_netif_ap = NULL;
+    ESP_ERROR_CHECK(esp_netif_create_default_wifi_mesh_netifs(&s_mesh_netif_sta, &s_mesh_netif_ap));
 
     wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&wifi_cfg));
@@ -158,6 +161,8 @@ void mesh_csi_init(void) {
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         MESH_EVENT, ESP_EVENT_ANY_ID, &mesh_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &mesh_event_handler, NULL, NULL));
 
     mesh_cfg_t mesh_cfg = MESH_INIT_CONFIG_DEFAULT();
     mesh_id_from_string(CONFIG_MESH_ID, &mesh_cfg.mesh_id);
@@ -166,11 +171,16 @@ void mesh_csi_init(void) {
     strlcpy((char *) mesh_cfg.mesh_ap.password, CONFIG_MESH_AP_PASSWORD,
             sizeof(mesh_cfg.mesh_ap.password));
 
-#if defined(CONFIG_MESH_ROUTER_SSID) && (sizeof(CONFIG_MESH_ROUTER_SSID) > 1)
-    strlcpy((char *) mesh_cfg.router.ssid, CONFIG_MESH_ROUTER_SSID,
-            sizeof(mesh_cfg.router.ssid));
-    strlcpy((char *) mesh_cfg.router.password, CONFIG_MESH_ROUTER_PASSWORD,
-            sizeof(mesh_cfg.router.password));
+#if defined(CONFIG_MESH_ROUTER_SSID)
+    if (strlen(CONFIG_MESH_ROUTER_SSID) > 0) {
+        strlcpy((char *) mesh_cfg.router.ssid, CONFIG_MESH_ROUTER_SSID,
+                sizeof(mesh_cfg.router.ssid));
+        strlcpy((char *) mesh_cfg.router.password, CONFIG_MESH_ROUTER_PASSWORD,
+                sizeof(mesh_cfg.router.password));
+    } else {
+        ESP_ERROR_CHECK(esp_mesh_fix_root(false));  // empty SSID - no-router mode
+        ESP_ERROR_CHECK(esp_mesh_set_ap_authmode(WIFI_AUTH_WPA2_PSK));
+    }
 #else
     ESP_ERROR_CHECK(esp_mesh_fix_root(false));  // auto root-election, no-router mode
     ESP_ERROR_CHECK(esp_mesh_set_ap_authmode(WIFI_AUTH_WPA2_PSK));
