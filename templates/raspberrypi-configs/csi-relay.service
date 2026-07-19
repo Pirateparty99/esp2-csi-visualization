@@ -3,7 +3,7 @@ Description=CSI UDP Relay to Upstream Server
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/python3 /opt/csi-udp-relay.py --upstream-ip <upstream-ip> --upstream-port 5566
+ExecStart=/usr/bin/python3 /opt/csi-udp-relay.py --upstream-ip <upstream-ip> --upstream-port 5566 --listen-port 5566 --bind 0.0.0.0
 Restart=always
 User=pi
 
