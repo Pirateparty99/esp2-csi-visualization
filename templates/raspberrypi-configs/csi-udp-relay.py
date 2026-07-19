@@ -15,7 +15,7 @@ def main():
                          help="Port ESP32s send to (default: 5566)")
     parser.add_argument("--bind", type=str, default="0.0.0.0")
     parser.add_argument("--upstream-ip", type=str, required=True,
-                         help="Laptop's real IP address on its actual network")
+                         help="Upstream server's real IP address on its actual network")
     parser.add_argument("--upstream-port", type=int, default=5566)
     args = parser.parse_args()
 
