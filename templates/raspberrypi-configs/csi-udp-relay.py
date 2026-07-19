@@ -13,10 +13,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--listen-port", type=int, default=5566,
                          help="Port ESP32s send to (default: 5566)")
-    parser.add_argument("--bind", type=str, default="0.0.0.0")
+    parser.add_argument("--bind", type=str, default="0.0.0.0",
+                         help="IP address to bind to for incoming connections")
     parser.add_argument("--upstream-ip", type=str, required=True,
                          help="Upstream server's real IP address on its actual network")
-    parser.add_argument("--upstream-port", type=int, default=5566)
+    parser.add_argument("--upstream-port", type=int, default=5566,
+                         help="Port on the upstream server to forward packets to (default: 5566)")
     args = parser.parse_args()
 
     recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
