@@ -247,16 +247,23 @@ apply_toolkit_overlay() {
         # Shared _components/ dir -- reached via "../../_components/..."
         # from any sub-project's main/main.cc (active_ap, active_sta,
         # wifi-mesh all resolve here the same way).
-        "esp32-csi-toolkit/_components/csi_component.h"
-        "esp32-csi-toolkit/_components/csi_udp_sender.h"    
-        "esp32-csi-toolkit/wifi-mesh/main/main.cc"
-        "esp32-csi-toolkit/wifi-mesh/main/Kconfig.projbuild"
-        "esp32-csi-toolkit/wifi-mesh/_components/mesh_root_rx.h"
-        "esp32-csi-toolkit/wifi-mesh/_components/mesh_csi_sender.h"
+        #
+        # NOTE: no "esp32-csi-toolkit/" prefix here -- the src= line
+        # below adds it explicitly, and repo_root (passed in as
+        # "third_party/esp32-csi-toolkit") already includes it for dest.
+        # Adding the prefix here too previously caused dest to become
+        # ".../esp32-csi-toolkit/esp32-csi-toolkit/..." which doesn't
+        # exist, so these files silently never reached the real build.
+        "_components/csi_component.h"
+        "_components/csi_udp_sender.h"
+        "wifi-mesh/main/main.cc"
+        "wifi-mesh/main/Kconfig.projbuild"
+        "wifi-mesh/_components/mesh_root_rx.h"
+        "wifi-mesh/_components/mesh_csi_sender.h"
     )
 
     for rel_path in "${files[@]}"; do
-        local src="${template_root}/${rel_path}"
+        local src="${template_root}/esp32-csi-toolkit/${rel_path}"
         local dest="${repo_root}/${rel_path}"
 
         if [ ! -f "$src" ]; then
