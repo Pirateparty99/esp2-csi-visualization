@@ -247,13 +247,6 @@ apply_toolkit_overlay() {
         # Shared _components/ dir -- reached via "../../_components/..."
         # from any sub-project's main/main.cc (active_ap, active_sta,
         # wifi-mesh all resolve here the same way).
-        #
-        # NOTE: no "esp32-csi-toolkit/" prefix here -- the src= line
-        # below adds it explicitly, and repo_root (passed in as
-        # "third_party/esp32-csi-toolkit") already includes it for dest.
-        # Adding the prefix here too previously caused dest to become
-        # ".../esp32-csi-toolkit/esp32-csi-toolkit/..." which doesn't
-        # exist, so these files silently never reached the real build.
         "_components/csi_component.h"
         "_components/csi_udp_sender.h"
         "wifi-mesh/main/main.cc"
