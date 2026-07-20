@@ -40,7 +40,7 @@ copy_sdkconfig_template() {
 
     rm -f sdkconfig
 
-    grep -v '^[[:space:]]*$' "$template" \
+    grep -vE '^[[:space:]]*$|^[[:space:]]*#' "$template" \
         | sed -E 's/^/CONFIG_/; s/=true$/=y/; s/=false$/=n/' \
         > sdkconfig.defaults
 
