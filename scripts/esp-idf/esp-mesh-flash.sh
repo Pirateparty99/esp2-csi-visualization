@@ -15,7 +15,9 @@ export LEGACY_PYTHON_BIN=python3.9
 # Set the board target for installing the board-specific toolchain(s) with ESP-IDF
 export ESP_TARGET=esp32,esp32c3  # multiple targets
 
-# cd third_party/esp32-csi-toolkit/wifi-mesh/
+source "${IDF_PATH}/export.sh"
+
+cd third_party/esp32-csi-toolkit/wifi-mesh/
 
 echo "Flashing from: $(pwd)"
 
@@ -38,8 +40,6 @@ else
     # never gets silently reflashed instead of current source.
     scripts/esp-idf/esp-csi-mesh-build.sh
 fi
-
-source "${IDF_PATH}/export.sh"
 
 
 idf.py flash
