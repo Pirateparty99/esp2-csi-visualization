@@ -23,6 +23,6 @@ else
 fi
 
 echo "Building ESP32 CSI Toolkit Active_STA firmware..."
-bash scripts/esp-idf/esp-csi-sta-build.sh
+bash scripts/esp-idf/esp-csi-mesh-build.sh
 
 echo "Done."
