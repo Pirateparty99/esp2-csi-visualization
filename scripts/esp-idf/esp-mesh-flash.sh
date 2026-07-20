@@ -17,10 +17,8 @@ export ESP_TARGET=esp32,esp32c3  # multiple targets
 
 source "${IDF_PATH}/export.sh"
 
-echo "Flashing from: $(pwd)"
-
 if [ "$SKIP_BUILD" = "1" ]; then
-    if [ ! -f build/wifi-mesh.bin ]; then
+    if [ ! -f third_party/esp32-csi-toolkit/wifi-mesh/build/wifi-mesh.bin ]; then
         echo "ERROR: --skip-build given but build/wifi-mesh.bin doesn't exist." >&2
         echo "Run without --skip-build first (or run the build script)." >&2
         exit 1
@@ -40,6 +38,8 @@ else
 fi
 
 cd third_party/esp32-csi-toolkit/wifi-mesh/
+
+echo "Flashing from: $(pwd)"
 
 idf.py flash
 
