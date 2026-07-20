@@ -13,7 +13,7 @@ export IDF_PATH="/home/esp-idf/v4.3.3"
 export LEGACY_PYTHON_BIN=python3.9
 
 # Set the board target for installing the board-specific toolchain(s) with ESP-IDF
-export ESP_TARGET=esp32,esp32c3  # multiple targets
+export ESP_TARGET=esp32  # multiple targets does not work currently
 
 source "${IDF_PATH}/export.sh"
 

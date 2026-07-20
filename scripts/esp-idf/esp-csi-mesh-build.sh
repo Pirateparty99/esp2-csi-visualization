@@ -157,8 +157,8 @@ eim-esp-build() {
 
         echo "Configuring ESP-IDF to connect to ESP32"
 
+        idf.py set-target $ESP_TARGET
         copy_sdkconfig_template
-        idf.py set-target esp32
 
         # Build the firmware
         echo "Building firmware"
@@ -212,7 +212,7 @@ legacy-esp-build () {
 
         echo "Configuring ESP-IDF to connect to ESP32"
 
-        idf.py set-target esp32
+        idf.py set-target $ESP_TARGET
         copy_sdkconfig_template
 
         # Build the firmware
