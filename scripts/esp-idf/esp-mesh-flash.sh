@@ -17,7 +17,7 @@ export ESP_TARGET=esp32,esp32c3  # multiple targets
 
 source "${IDF_PATH}/export.sh"
 
-cd third_party/esp32-csi-toolkit/wifi-mesh/
+# cd third_party/esp32-csi-toolkit/wifi-mesh/
 
 echo "Flashing from: $(pwd)"
 
@@ -38,7 +38,7 @@ else
     # Always rebuild before flashing, so a stale/previous binary (e.g. left
     # over from before this project's main.cc last compiled successfully)
     # never gets silently reflashed instead of current source.
-    idf.py build
+    scripts/esp-idf/esp-csi-mesh-build.sh
 fi
 
 idf.py flash
