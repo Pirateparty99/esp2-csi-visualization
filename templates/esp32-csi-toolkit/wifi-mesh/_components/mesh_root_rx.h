@@ -20,7 +20,12 @@ static inline void mesh_root_rx_task(void *pv) {
         data.size = sizeof(rx_buf); // reset each call -- esp_mesh_recv shrinks this to actual received length
         esp_err_t err = esp_mesh_recv(&from, &data, portMAX_DELAY, &flag, NULL, 0);
         if (err == ESP_OK) {
-            csi_udp_sender_send_raw((const char *) data.data, data.size);
+            if (data.proto == MESH_PROTO_JSON) {
+                csi_udp_sender_send_raw((const char *) data.data, data.size);
+            } else {
+                ESP_LOGW(MESH_RX_TAG, "Dropped non-JSON mesh packet: proto=0x%x size=%d",
+                         data.proto, data.size);
+            }
         } else {
             ESP_LOGW(MESH_RX_TAG, "esp_mesh_recv error: 0x%x", err);
         }
