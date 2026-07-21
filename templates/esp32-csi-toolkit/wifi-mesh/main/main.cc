@@ -175,6 +175,7 @@ void mesh_csi_init(void) {
     if (strlen(CONFIG_MESH_ROUTER_SSID) > 0) {
         strlcpy((char *) mesh_cfg.router.ssid, CONFIG_MESH_ROUTER_SSID,
                 sizeof(mesh_cfg.router.ssid));
+        mesh_cfg.router.ssid_len = strlen(CONFIG_MESH_ROUTER_SSID);
         strlcpy((char *) mesh_cfg.router.password, CONFIG_MESH_ROUTER_PASSWORD,
                 sizeof(mesh_cfg.router.password));
     } else {
