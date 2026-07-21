@@ -81,22 +81,20 @@ menu "ESP32 CSI Tool Config"
             If you do though, the program will be recognize this and not attempt writing to the SD card.
     config SEND_CSI_TO_UDP
         depends on SHOULD_COLLECT_CSI
-        bool "Send CSI data to UDP (WiFi-3D-Fusion compatible)"
+        bool "Send CSI data to UDP"
         default "n"
         help
-            Sends CSI data as JSON over UDP, matching the payload format expected
-            by WiFi-3D-Fusion's esp32_udp.py receiver.
+            Sends CSI data as JSON over UDP.
     config UDP_TARGET_IP
         depends on SEND_CSI_TO_UDP
         string "UDP target IP address"
         default "192.168.4.1"
         help
-            IP address of the host machine running WiFi-3D-Fusion.
+            IP address of the target host machine or router to forward UDP CSI data to.
     config UDP_TARGET_PORT
         depends on SEND_CSI_TO_UDP
         int "UDP target port"
         default 5566
         help
-            UDP port WiFi-3D-Fusion's esp32_udp.py listens on (must match
-            esp32_udp_port in configs/fusion.yaml).
+            UDP port to forward CSI data on.
 endmenu
