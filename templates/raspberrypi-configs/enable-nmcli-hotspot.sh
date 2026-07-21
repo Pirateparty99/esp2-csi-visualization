@@ -19,6 +19,7 @@ sudo nmcli con modify espeon-hotspot \
 sudo nmcli con modify espeon-hotspot \
         802-11-wireless.mode ap \
         802-11-wireless.band bg \
+        802-11-wireless.channel 6 \
         802-11-wireless-security.pmf 1
 
 
