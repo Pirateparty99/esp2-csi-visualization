@@ -119,7 +119,7 @@ print_build_success() {
         echo "  idf.py -p $port flash monitor"
     else
         echo "No device detected on any serial port."
-        echo "Plug in your ESP32 and check again with:"
+        echo "Plug in your board and check again with:"
         if [ "$uname_s" = "Darwin" ]; then
             example_port="/dev/cu.usbserial-1420"
             echo "  ls /dev/cu.*"
@@ -155,7 +155,7 @@ eim-esp-build() {
         # between "$HOME" and ".espressif").
         export PATH="$(printf "%s" "$PATH" | sed -E "s#([^/])\.espressif/#\1/.espressif/#g")"
 
-        echo "Configuring ESP-IDF to connect to ESP32"
+        echo "Configuring ESP-IDF to connect to $ESP_TARGET"
 
         idf.py set-target $ESP_TARGET
         copy_sdkconfig_template
@@ -210,7 +210,7 @@ legacy-esp-build () {
 
         source "${IDF_PATH}/export.sh"
 
-        echo "Configuring ESP-IDF to connect to ESP32"
+        echo "Configuring ESP-IDF to connect to $ESP_TARGET"
 
         idf.py set-target $ESP_TARGET
         copy_sdkconfig_template
