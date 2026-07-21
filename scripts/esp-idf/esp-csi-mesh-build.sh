@@ -249,6 +249,7 @@ apply_toolkit_overlay() {
         # wifi-mesh all resolve here the same way).
         "_components/csi_component.h"
         "_components/csi_udp_sender.h"
+        "wifi-mesh/partitions.csv"
         "wifi-mesh/main/main.cc"
         "wifi-mesh/main/Kconfig.projbuild"
         "wifi-mesh/_components/mesh_root_rx.h"
