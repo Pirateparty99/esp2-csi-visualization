@@ -3,86 +3,164 @@
 
 #include "esp_mesh.h"
 #include "esp_wifi_types.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
 #include "csi_udp_sender.h"   // reuse csi_to_json()
 
 static const char *MESH_CSI_TAG = "mesh_csi";
-#define MESH_CSI_JSON_BUF_SIZE 2048
 
-// esp_mesh_send() is documented as not reentrant, and there are two
-// independent callers here: the heartbeat task and the Wi-Fi CSI callback.
-// Without serializing them the second caller enters while the first is still
-// inside the API. Observed symptom: a leaf's heartbeat task stopped after its
-// very first send and never printed again, while the root received nothing.
+// Filler traffic. Heartbeats carry no sensing data -- their only purpose is
+// to keep every link in the mesh tree busy with real 802.11 frames. The
+// ESP32's CSI hardware only fires on RX (including the automatic MAC-layer
+// ACK a unicast send gets back), and ESP-MESH's own control-plane chatter is
+// far too sparse to sustain a CSI stream: an otherwise-idle node produced one
+// capture during association and none for the next 30+ seconds.
 //
-// Bounded try-take rather than a blocking take, so no caller is parked here
-// indefinitely. Callers pass their own budget: CSI is the actual payload and
-// waits briefly, while the heartbeat is only filler traffic and gives up
-// immediately rather than starving CSI of the lock.
-static SemaphoreHandle_t s_mesh_send_mutex = xSemaphoreCreateMutex();
+// mesh_root_rx.h recognizes this marker and drops it instead of forwarding.
+#define MESH_HEARTBEAT_PAYLOAD "{\"type\":\"HEARTBEAT\"}"
+#define MESH_HEARTBEAT_PAYLOAD_LEN (sizeof(MESH_HEARTBEAT_PAYLOAD) - 1)
 
-static inline esp_err_t mesh_send_locked(const mesh_addr_t *to, mesh_data_t *data,
-                                          int flag, uint32_t wait_ms) {
-    if (s_mesh_send_mutex == NULL) {
-        return ESP_ERR_INVALID_STATE;
+// A serialized CSI reading waiting to go out. csi_to_json() emits at most
+// CSI_UDP_MAX_VALUES samples, which fits comfortably here; snprintf truncates
+// rather than overruns if that ever changes.
+#define MESH_CSI_JSON_MAX    1200
+#define MESH_CSI_QUEUE_DEPTH 8
+
+typedef struct {
+    uint16_t len;
+    char json[MESH_CSI_JSON_MAX];
+} mesh_csi_item_t;
+
+static QueueHandle_t s_mesh_csi_queue = NULL;
+static uint32_t s_mesh_csi_dropped = 0;
+
+static inline void mesh_csi_sender_init(void) {
+    if (s_mesh_csi_queue == NULL) {
+        s_mesh_csi_queue = xQueueCreate(MESH_CSI_QUEUE_DEPTH, sizeof(mesh_csi_item_t));
     }
-    if (xSemaphoreTake(s_mesh_send_mutex, pdMS_TO_TICKS(wait_ms)) != pdTRUE) {
-        return ESP_ERR_TIMEOUT;
-    }
-    esp_err_t err = esp_mesh_send(to, data, flag, NULL, 0);
-    xSemaphoreGive(s_mesh_send_mutex);
-    return err;
 }
 
-// Upstream sends address the root directly rather than an external IP.
+// Called from the Wi-Fi CSI callback, so this only serializes and enqueues --
+// it never touches esp_mesh_send().
 //
-// esp_mesh_send() treats "to" and the flags as a matched pair: a NULL "to"
-// with flag 0 means "deliver to the root itself" (read back with
-// esp_mesh_recv), while MESH_DATA_TODS means "deliver to an external IP
-// network" and needs "to" to carry that IPv4:PORT (read back with
-// esp_mesh_recv_toDS).
-//
-// The toDS form was tried first and did not deliver: with a root that had a
-// DHCP lease and had posted toDS reachability, the root still received
-// nothing while leaves logged continuous "[WND-RX] ... 1200 ms timeout"
-// warnings -- their upstream window never opened. Addressing the root
-// directly avoids the toDS window machinery altogether, and the root still
-// forwards to the configured UDP target itself.
-
+// Sending directly from here was tried and does not work: esp_mesh_send() is
+// documented as not reentrant and blocks by default, so calling it from the
+// callback (which runs on the Wi-Fi task holding csi_component.h's mutex)
+// raced the sender task and wedged the CSI RX path. Guarding it with a mutex
+// instead just moved the failure -- CSI is triggered *by* the heartbeat
+// traffic, so captures land exactly while the sender holds the lock, and
+// every CSI send then timed out on it.
 static inline void mesh_csi_sender_send(const wifi_csi_info_t *data) {
     if (!esp_mesh_is_device_active()) {
         return;
     }
     if (esp_mesh_is_root()) {
-        // Root captures CSI locally too (it's still a sensing node) --
-        // send straight to UDP instead of looping it through the mesh.
+        // Root is still a sensing node, but it has no parent to relay
+        // through -- it owns the UDP socket, so its own captures go
+        // straight out.
         csi_udp_sender_send(data);
         return;
     }
-
-    static char json_buf[MESH_CSI_JSON_BUF_SIZE];
-    int len = csi_to_json(data, json_buf, sizeof(json_buf));
-    if (len <= 0) {
+    if (s_mesh_csi_queue == NULL) {
         return;
     }
 
-    mesh_data_t mesh_pkt;
-    mesh_pkt.data = (uint8_t *) json_buf;
-    mesh_pkt.size = (uint16_t) len;
-    mesh_pkt.proto = MESH_PROTO_JSON;
-    mesh_pkt.tos = MESH_TOS_P2P;
+    // static rather than a ~1.2KB stack frame on the Wi-Fi task. Safe because
+    // csi_component.h serializes callbacks behind its own mutex.
+    static mesh_csi_item_t item;
+    int len = csi_to_json(data, item.json, sizeof(item.json));
+    if (len <= 0) {
+        return;
+    }
+    item.len = (uint16_t) len;
 
-    // MESH_DATA_NONBLOCK is required here. This runs inside the Wi-Fi CSI
-    // callback while csi_component.h holds its mutex, so a blocking send
-    // that never completes wedges the whole CSI RX path, not just this
-    // packet. Dropping a sample under backpressure is the right trade.
-    esp_err_t err = mesh_send_locked(NULL, &mesh_pkt, MESH_DATA_NONBLOCK, 30);
-    if (err != ESP_OK) {
-        // Rate-limited: under sustained backpressure this fires per capture.
-        static int64_t last_warn_us = 0;
+    // Never block the callback: drop under backpressure instead.
+    if (xQueueSend(s_mesh_csi_queue, &item, 0) != pdTRUE) {
+        s_mesh_csi_dropped++;
+    }
+}
+
+// Sole owner of esp_mesh_send(). Because the API is not reentrant, exactly
+// one task may ever call it -- enforcing that single-owner rule is why this
+// task exists, and why it needs no lock of its own.
+//
+// Draining CSI takes priority; heartbeats go out only when the queue is
+// empty, so filler traffic naturally backs off once real captures flow.
+static inline void mesh_tx_task(void *pv) {
+    static mesh_csi_item_t item;
+    uint32_t n_csi = 0, n_hb = 0, n_fail = 0;
+    esp_err_t last_err = ESP_OK;
+    int64_t last_report_us = esp_timer_get_time();
+    const int64_t REPORT_INTERVAL_US = 5000000; // 5s
+
+#if defined CONFIG_PACKET_RATE && (CONFIG_PACKET_RATE > 0)
+    const TickType_t idle_wait = pdMS_TO_TICKS(1000 / CONFIG_PACKET_RATE);
+#else
+    const TickType_t idle_wait = pdMS_TO_TICKS(50);
+#endif
+
+    for (;;) {
         int64_t now_us = esp_timer_get_time();
-        if (now_us - last_warn_us >= 5000000) {
-            last_warn_us = now_us;
-            ESP_LOGW(MESH_CSI_TAG, "esp_mesh_send failed: 0x%x", err);
+        if (now_us - last_report_us >= REPORT_INTERVAL_US) {
+            last_report_us = now_us;
+            ESP_LOGI(MESH_CSI_TAG,
+                     "tx: %u CSI, %u heartbeats, %u failed (last 0x%x), %u dropped, layer:%d root:%d",
+                     n_csi, n_hb, n_fail, last_err, s_mesh_csi_dropped,
+                     esp_mesh_get_layer(), esp_mesh_is_root() ? 1 : 0);
+            n_csi = 0;
+            n_hb = 0;
+            n_fail = 0;
+            s_mesh_csi_dropped = 0;
+        }
+
+        if (!esp_mesh_is_device_active()) {
+            vTaskDelay(idle_wait);
+            continue;
+        }
+
+        if (esp_mesh_is_root()) {
+            // No parent to relay through. Keep the root's own uplink busy so
+            // it still captures CSI; anything from below is handled by
+            // mesh_root_rx_task.
+            csi_udp_sender_ping();
+            vTaskDelay(idle_wait);
+            continue;
+        }
+
+        mesh_data_t pkt;
+        // Doubles as this loop's pacing: with nothing queued we wait here for
+        // one heartbeat interval before emitting filler.
+        bool have_csi = (s_mesh_csi_queue != NULL &&
+                         xQueueReceive(s_mesh_csi_queue, &item, idle_wait) == pdTRUE);
+        if (have_csi) {
+            pkt.data = (uint8_t *) item.json;
+            pkt.size = item.len;
+        } else {
+            pkt.data = (uint8_t *) MESH_HEARTBEAT_PAYLOAD;
+            pkt.size = MESH_HEARTBEAT_PAYLOAD_LEN;
+        }
+        pkt.proto = MESH_PROTO_JSON;
+        pkt.tos = MESH_TOS_P2P;
+
+        // Addressed to the root itself: NULL "to" with flag 0 is the pairing
+        // esp_mesh_send() defines for that, and the root reads it back with
+        // esp_mesh_recv(). The external-IP form (MESH_DATA_TODS +
+        // esp_mesh_recv_toDS) was tried first and never delivered, even with a
+        // root holding a DHCP lease and posting toDS reachability.
+        //
+        // NONBLOCK so a closed upstream window drops a packet rather than
+        // stalling this task indefinitely.
+        esp_err_t err = esp_mesh_send(NULL, &pkt, MESH_DATA_NONBLOCK, NULL, 0);
+        if (err == ESP_OK) {
+            if (have_csi) {
+                n_csi++;
+            } else {
+                n_hb++;
+            }
+        } else {
+            n_fail++;
+            last_err = err;
         }
     }
 }

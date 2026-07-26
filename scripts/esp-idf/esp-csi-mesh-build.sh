@@ -279,7 +279,6 @@ apply_toolkit_overlay() {
     local mesh_only_files=(
         "mesh_root_rx.h"
         "mesh_csi_sender.h"
-        "mesh_heartbeat.h"
     )
 
     for fname in "${mesh_only_files[@]}"; do

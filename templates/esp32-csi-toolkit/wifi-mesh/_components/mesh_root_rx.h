@@ -4,7 +4,7 @@
 #include <cstring>
 #include "esp_mesh.h"
 #include "csi_udp_sender.h"
-#include "mesh_heartbeat.h"
+#include "mesh_csi_sender.h"   // MESH_HEARTBEAT_PAYLOAD
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 

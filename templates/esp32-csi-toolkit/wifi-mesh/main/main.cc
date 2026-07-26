@@ -24,7 +24,6 @@
 #include "../../_components/csi_udp_sender.h"
 #include "../../_components/mesh_csi_sender.h"
 #include "../../_components/mesh_root_rx.h"
-#include "../../_components/mesh_heartbeat.h"
 
 #define ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
 #define ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
@@ -258,8 +257,10 @@ extern "C" void app_main() {
     printf("CSI will not be collected. Check `idf.py menuconfig  # > ESP32 CSI Tool Config` to enable CSI");
 #endif
 
+    // Queue must exist before csi_init() arms the CSI callback, since the
+    // callback enqueues into it.
+    mesh_csi_sender_init();
     csi_init((char *) "MESH");
 
-    xTaskCreatePinnedToCore(&mesh_heartbeat_task, "mesh_heartbeat", 4096,
-                             NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(&mesh_tx_task, "mesh_tx", 4096, NULL, 5, NULL, 1);
 }
