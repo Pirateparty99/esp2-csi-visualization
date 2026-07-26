@@ -1,8 +1,10 @@
 #ifndef MESH_ROOT_RX_H
 #define MESH_ROOT_RX_H
 
+#include <cstring>
 #include "esp_mesh.h"
 #include "csi_udp_sender.h"
+#include "mesh_heartbeat.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -21,6 +23,13 @@ static inline void mesh_root_rx_task(void *pv) {
         esp_err_t err = esp_mesh_recv(&from, &data, portMAX_DELAY, &flag, NULL, 0);
         if (err == ESP_OK) {
             if (data.proto == MESH_PROTO_JSON) {
+                // Heartbeat packets exist purely to keep mesh links busy so
+                // CSI keeps firing -- they carry no sensing data, so drop
+                // them here instead of forwarding to the UDP consumer.
+                if (data.size == MESH_HEARTBEAT_PAYLOAD_LEN &&
+                    memcmp(data.data, MESH_HEARTBEAT_PAYLOAD, MESH_HEARTBEAT_PAYLOAD_LEN) == 0) {
+                    continue;
+                }
                 csi_udp_sender_send_raw((const char *) data.data, data.size);
             } else {
                 ESP_LOGW(MESH_RX_TAG, "Dropped non-JSON mesh packet: proto=0x%x size=%d",

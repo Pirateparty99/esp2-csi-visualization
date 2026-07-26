@@ -91,4 +91,19 @@ static inline void csi_udp_sender_send_raw(const char *data, size_t len) {
         ESP_LOGE(CSI_UDP_TAG, "sendto (raw) failed: errno %d", errno);
     }
 }
+
+// Sends a tiny marker datagram to the same UDP target as the CSI stream,
+// purely to generate real IP traffic between the mesh root and the
+// router/host so the root keeps receiving frames -- and therefore keeps
+// firing CSI captures -- even when there's no other application traffic.
+// No-op until csi_udp_sender_init() has run (i.e. before this node becomes
+// root).
+static inline void csi_udp_sender_ping(void) {
+    if (csi_udp_sock < 0) {
+        return;
+    }
+    static const char ping[] = "1";
+    sendto(csi_udp_sock, ping, sizeof(ping) - 1, 0,
+           (struct sockaddr *) &csi_udp_dest_addr, sizeof(csi_udp_dest_addr));
+}
 #endif // CSI_UDP_SENDER_H

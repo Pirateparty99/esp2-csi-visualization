@@ -24,6 +24,7 @@
 #include "../../_components/csi_udp_sender.h"
 #include "../../_components/mesh_csi_sender.h"
 #include "../../_components/mesh_root_rx.h"
+#include "../../_components/mesh_heartbeat.h"
 
 #define ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
 #define ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
@@ -234,4 +235,7 @@ extern "C" void app_main() {
 #endif
 
     csi_init((char *) "MESH");
+
+    xTaskCreatePinnedToCore(&mesh_heartbeat_task, "mesh_heartbeat", 4096,
+                             NULL, 5, NULL, 1);
 }
