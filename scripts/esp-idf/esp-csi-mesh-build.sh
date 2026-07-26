@@ -252,8 +252,6 @@ apply_toolkit_overlay() {
         "wifi-mesh/partitions.csv"
         "wifi-mesh/main/main.cc"
         "wifi-mesh/main/Kconfig.projbuild"
-        "wifi-mesh/_components/mesh_root_rx.h"
-        "wifi-mesh/_components/mesh_csi_sender.h"
     )
 
     for rel_path in "${files[@]}"; do
@@ -268,6 +266,34 @@ apply_toolkit_overlay() {
         mkdir -p "$(dirname "$dest")"
         cp "$src" "$dest"
         echo "Applied overlay: ${rel_path}"
+    done
+
+    # wifi-mesh-only components. Organized under wifi-mesh/_components/ in
+    # the template source for clarity, but wifi-mesh/main/main.cc's
+    # "../../_components/..." include resolves relative to main.cc's own
+    # directory (wifi-mesh/main/), which lands two levels up in the *shared*
+    # top-level _components/ dir -- the same one active_sta/active_ap use --
+    # not a wifi-mesh-local _components/ dir. Deploy them there so the
+    # compiler actually picks up template edits instead of silently
+    # recompiling whatever was last manually copied to that path.
+    local mesh_only_files=(
+        "mesh_root_rx.h"
+        "mesh_csi_sender.h"
+        "mesh_heartbeat.h"
+    )
+
+    for fname in "${mesh_only_files[@]}"; do
+        local src="${template_root}/esp32-csi-toolkit/wifi-mesh/_components/${fname}"
+        local dest="${repo_root}/_components/${fname}"
+
+        if [ ! -f "$src" ]; then
+            err "Overlay template not found: $src"
+            exit 1
+        fi
+
+        mkdir -p "$(dirname "$dest")"
+        cp "$src" "$dest"
+        echo "Applied overlay: _components/${fname} (from wifi-mesh/_components/${fname})"
     done
 }
 export -f apply_toolkit_overlay
