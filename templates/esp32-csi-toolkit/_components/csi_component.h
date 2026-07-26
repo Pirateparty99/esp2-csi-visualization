@@ -84,7 +84,9 @@ int8_t *my_ptr;
     fflush(stdout);
 #endif // CONFIG_SEND_CSI_TO_SERIAL
 
-#if CONFIG_SEND_CSI_TO_UDP
+#if CONFIG_SEND_CSI_TO_MESH
+    mesh_csi_sender_send(&d);
+#elif CONFIG_SEND_CSI_TO_UDP
     {
         // Rate-limit UDP sends: with multiple associated stations, CSI
         // callbacks can fire far faster than the WiFi TX path / lwIP
@@ -98,8 +100,6 @@ int8_t *my_ptr;
             csi_udp_sender_send(&d);
         }
     }
-#elif CONFIG_SEND_CSI_TO_MESH
-    mesh_csi_sender_send(&d);
 #endif
 
     vTaskDelay(0);
