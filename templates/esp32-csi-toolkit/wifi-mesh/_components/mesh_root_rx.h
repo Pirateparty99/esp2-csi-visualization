@@ -24,12 +24,31 @@ static inline void mesh_root_rx_task(void *pv) {
     data.data = rx_buf;
     data.size = sizeof(rx_buf);
 
+    // Forwarding happens silently, so without a periodic count there is no
+    // way to tell "the mesh is delivering CSI" apart from "nothing is
+    // arriving at all" by watching the root's console.
+    uint32_t n_forwarded = 0, n_heartbeat = 0;
+    int64_t last_report_us = esp_timer_get_time();
+    const int64_t REPORT_INTERVAL_US = 5000000; // 5s
+
     for (;;) {
+        int64_t now_us = esp_timer_get_time();
+        if (now_us - last_report_us >= REPORT_INTERVAL_US) {
+            last_report_us = now_us;
+            ESP_LOGI(MESH_RX_TAG, "forwarded %u CSI packets, dropped %u heartbeats",
+                     n_forwarded, n_heartbeat);
+            n_forwarded = 0;
+            n_heartbeat = 0;
+        }
+
         mesh_addr_t from;
         mesh_addr_t to;
         int flag = 0;
         data.size = sizeof(rx_buf); // reset each call -- recv shrinks this to actual received length
-        esp_err_t err = esp_mesh_recv_toDS(&from, &to, &data, portMAX_DELAY, &flag, NULL, 0);
+        // Bounded wait rather than portMAX_DELAY so the periodic report
+        // above still fires when no traffic is arriving -- which is exactly
+        // the case worth reporting.
+        esp_err_t err = esp_mesh_recv_toDS(&from, &to, &data, 1000, &flag, NULL, 0);
         if (err == ESP_OK) {
             if (data.proto == MESH_PROTO_JSON) {
                 // Heartbeat packets exist purely to keep mesh links busy so
@@ -37,13 +56,17 @@ static inline void mesh_root_rx_task(void *pv) {
                 // them here instead of forwarding to the UDP consumer.
                 if (data.size == MESH_HEARTBEAT_PAYLOAD_LEN &&
                     memcmp(data.data, MESH_HEARTBEAT_PAYLOAD, MESH_HEARTBEAT_PAYLOAD_LEN) == 0) {
+                    n_heartbeat++;
                     continue;
                 }
                 csi_udp_sender_send_raw((const char *) data.data, data.size);
+                n_forwarded++;
             } else {
                 ESP_LOGW(MESH_RX_TAG, "Dropped non-JSON mesh packet: proto=0x%x size=%d",
                          data.proto, data.size);
             }
+        } else if (err == ESP_ERR_MESH_TIMEOUT) {
+            continue; // no traffic this interval -- expected, keeps reporting
         } else if (err == ESP_ERR_MESH_RECV_RELEASE) {
             // Normal control signal (the stack is releasing a pending
             // toDS read, e.g. around a root change), not a failure.

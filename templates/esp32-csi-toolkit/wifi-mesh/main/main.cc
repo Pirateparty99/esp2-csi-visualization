@@ -77,6 +77,11 @@ static const char *TAG = "Active CSI collection (Mesh)";
 static bool s_is_mesh_root = false;
 static TaskHandle_t s_mesh_root_rx_handle = NULL;
 
+// Needed by the event handler (to drive the root's DHCP client), so these
+// live at file scope rather than inside mesh_csi_init().
+static esp_netif_t *s_mesh_netif_sta = NULL;
+static esp_netif_t *s_mesh_netif_ap = NULL;
+
 // Parses "aa:bb:cc:dd:ee:ff" style hex string from Kconfig into a mesh_addr_t.
 static void mesh_id_from_string(const char *str, mesh_addr_t *out) {
     unsigned int bytes[6];
@@ -90,12 +95,19 @@ static void mesh_id_from_string(const char *str, mesh_addr_t *out) {
 static void mesh_event_handler(void *arg, esp_event_base_t event_base,
                                 int32_t event_id, void *event_data) {
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        // Only fires when using an external router uplink
-        // (CONFIG_MESH_ROUTER_SSID set). In no-router/standalone mode
-        // this never fires -- the root's own softAP interface handles
-        // the UDP send to the host PC instead.
         ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
         ESP_LOGI(TAG, "Root got IP:" IPSTR, IP2STR(&event->ip_info.ip));
+
+        // Only now is this root genuinely able to reach the UDP target, so
+        // this is the point at which it can honestly advertise toDS
+        // reachability. Announcing it earlier (at role change, before DHCP
+        // completes) tells descendants to send upstream toDS traffic the
+        // root cannot actually forward.
+        ESP_ERROR_CHECK(esp_mesh_post_toDS_state(true));
+
+        // Socket binds against the interface address, so (re)create it once
+        // an address actually exists.
+        csi_udp_sender_init();
         return;
     }
 
@@ -128,22 +140,27 @@ static void mesh_event_handler(void *arg, esp_event_base_t event_base,
     // event rather than latching a decision made once at boot.
     bool now_root = esp_mesh_is_root();
     if (now_root && !s_is_mesh_root) {
-        ESP_LOGI(TAG, "This node became ROOT -- starting UDP sender + mesh RX task");
-        csi_udp_sender_init();
+        ESP_LOGI(TAG, "This node became ROOT -- starting DHCP client + mesh RX task");
+
+        // esp_netif_create_default_wifi_mesh_netifs() deliberately clears
+        // ESP_NETIF_DHCP_CLIENT and stops the client, because non-root
+        // nodes have no router uplink to lease from. Only the root does, so
+        // it has to start the client itself -- otherwise it never gets an
+        // IP and can never actually deliver anything to the UDP target.
+        esp_netif_dhcpc_stop(s_mesh_netif_sta);
+        ESP_ERROR_CHECK(esp_netif_dhcpc_start(s_mesh_netif_sta));
+
         xTaskCreatePinnedToCore(&mesh_root_rx_task, "mesh_root_rx", 4096,
                                  NULL, 5, &s_mesh_root_rx_handle, 1);
-
-        // Tell the stack this root can reach the external IP network.
-        // Until this is posted, the mesh withholds the upstream toDS
-        // window from descendants, so their MESH_DATA_TODS sends never get
-        // a send window -- which surfaces on leaves as repeating
-        // "[WND-RX] ... 1200 ms timeout" warnings and no data reaching the
-        // UDP target.
-        ESP_ERROR_CHECK(esp_mesh_post_toDS_state(true));
-
         s_is_mesh_root = true;
     } else if (!now_root && s_is_mesh_root) {
         ESP_LOGW(TAG, "This node lost ROOT role -- stopping mesh RX task");
+
+        // Stop claiming an uplink this node no longer has, so descendants
+        // don't keep queueing upstream toDS traffic against it.
+        esp_mesh_post_toDS_state(false);
+        esp_netif_dhcpc_stop(s_mesh_netif_sta);
+
         if (s_mesh_root_rx_handle) {
             vTaskDelete(s_mesh_root_rx_handle);
             s_mesh_root_rx_handle = NULL;
@@ -157,8 +174,6 @@ void mesh_csi_init(void) {
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    static esp_netif_t *s_mesh_netif_sta = NULL;
-    static esp_netif_t *s_mesh_netif_ap = NULL;
     ESP_ERROR_CHECK(esp_netif_create_default_wifi_mesh_netifs(&s_mesh_netif_sta, &s_mesh_netif_ap));
 
     wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
