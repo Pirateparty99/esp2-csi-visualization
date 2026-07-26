@@ -1,33 +1,52 @@
 #ifndef MESH_CSI_SENDER_H
 #define MESH_CSI_SENDER_H
 
-#include <cstring>
 #include "esp_mesh.h"
 #include "esp_wifi_types.h"
-#include "lwip/inet.h"
 #include "csi_udp_sender.h"   // reuse csi_to_json()
 
 static const char *MESH_CSI_TAG = "mesh_csi";
 #define MESH_CSI_JSON_BUF_SIZE 2048
 
-// Destination for upstream mesh traffic sent with MESH_DATA_TODS.
+// esp_mesh_send() is documented as not reentrant, and there are two
+// independent callers here: the heartbeat task and the Wi-Fi CSI callback.
+// Without serializing them the second caller enters while the first is still
+// inside the API. Observed symptom: a leaf's heartbeat task stopped after its
+// very first send and never printed again, while the root received nothing.
 //
-// esp_mesh_send() treats the "to" argument and the flags as a matched pair:
-// a NULL "to" means "deliver to the root itself" and pairs with flag 0
-// (read back via esp_mesh_recv), while MESH_DATA_TODS means "deliver to an
-// external IP network" and requires "to" to carry the IPv4:PORT of that
-// destination (read back via esp_mesh_recv_toDS). Passing NULL together
-// with MESH_DATA_TODS mixes the two and leaves the packet without a usable
-// external destination.
-//
-// Our root ignores the address it receives and forwards to its own
-// configured UDP target, but the mesh stack still needs a well-formed one
-// here to route the packet as toDS traffic at all.
-static inline void mesh_csi_udp_target(mesh_addr_t *out) {
-    memset(out, 0, sizeof(*out));
-    out->mip.ip4.addr = ipaddr_addr(CONFIG_UDP_TARGET_IP);
-    out->mip.port = htons(CONFIG_UDP_TARGET_PORT);
+// Bounded try-take rather than a blocking take, so no caller is parked here
+// indefinitely. Callers pass their own budget: CSI is the actual payload and
+// waits briefly, while the heartbeat is only filler traffic and gives up
+// immediately rather than starving CSI of the lock.
+static SemaphoreHandle_t s_mesh_send_mutex = xSemaphoreCreateMutex();
+
+static inline esp_err_t mesh_send_locked(const mesh_addr_t *to, mesh_data_t *data,
+                                          int flag, uint32_t wait_ms) {
+    if (s_mesh_send_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_mesh_send_mutex, pdMS_TO_TICKS(wait_ms)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    esp_err_t err = esp_mesh_send(to, data, flag, NULL, 0);
+    xSemaphoreGive(s_mesh_send_mutex);
+    return err;
 }
+
+// Upstream sends address the root directly rather than an external IP.
+//
+// esp_mesh_send() treats "to" and the flags as a matched pair: a NULL "to"
+// with flag 0 means "deliver to the root itself" (read back with
+// esp_mesh_recv), while MESH_DATA_TODS means "deliver to an external IP
+// network" and needs "to" to carry that IPv4:PORT (read back with
+// esp_mesh_recv_toDS).
+//
+// The toDS form was tried first and did not deliver: with a root that had a
+// DHCP lease and had posted toDS reachability, the root still received
+// nothing while leaves logged continuous "[WND-RX] ... 1200 ms timeout"
+// warnings -- their upstream window never opened. Addressing the root
+// directly avoids the toDS window machinery altogether, and the root still
+// forwards to the configured UDP target itself.
 
 static inline void mesh_csi_sender_send(const wifi_csi_info_t *data) {
     if (!esp_mesh_is_device_active()) {
@@ -52,12 +71,19 @@ static inline void mesh_csi_sender_send(const wifi_csi_info_t *data) {
     mesh_pkt.proto = MESH_PROTO_JSON;
     mesh_pkt.tos = MESH_TOS_P2P;
 
-    mesh_addr_t to;
-    mesh_csi_udp_target(&to);
-
-    esp_err_t err = esp_mesh_send(&to, &mesh_pkt, MESH_DATA_TODS, NULL, 0);
+    // MESH_DATA_NONBLOCK is required here. This runs inside the Wi-Fi CSI
+    // callback while csi_component.h holds its mutex, so a blocking send
+    // that never completes wedges the whole CSI RX path, not just this
+    // packet. Dropping a sample under backpressure is the right trade.
+    esp_err_t err = mesh_send_locked(NULL, &mesh_pkt, MESH_DATA_NONBLOCK, 30);
     if (err != ESP_OK) {
-        ESP_LOGW(MESH_CSI_TAG, "esp_mesh_send failed: 0x%x", err);
+        // Rate-limited: under sustained backpressure this fires per capture.
+        static int64_t last_warn_us = 0;
+        int64_t now_us = esp_timer_get_time();
+        if (now_us - last_warn_us >= 5000000) {
+            last_warn_us = now_us;
+            ESP_LOGW(MESH_CSI_TAG, "esp_mesh_send failed: 0x%x", err);
+        }
     }
 }
 

@@ -10,14 +10,12 @@
 
 static const char *MESH_RX_TAG = "mesh_root_rx";
 
-// Leaf nodes send CSI upstream with the MESH_DATA_TODS flag, which marks a
-// packet as destined for the external IP network rather than for another
-// node inside the mesh. Those land in the root's separate toDS queue and are
-// only drained by esp_mesh_recv_toDS() -- plain esp_mesh_recv() never sees
-// them. Draining the wrong queue leaves the toDS queue to fill up and stalls
-// the mesh's upstream flow-control window, which shows up on leaves as
-// repeating "[WND-RX] ... 1200 ms timeout" warnings with a climbing
-// timeout_count.
+// Leaves address their CSI to the root itself (NULL "to", flag 0), so it
+// arrives on the normal mesh receive path and esp_mesh_recv() is the
+// matching call. The root then forwards to the configured UDP target.
+//
+// See mesh_csi_sender.h for why the external-IP (MESH_DATA_TODS /
+// esp_mesh_recv_toDS) form is not used.
 static inline void mesh_root_rx_task(void *pv) {
     static uint8_t rx_buf[2048];
     mesh_data_t data;
@@ -42,13 +40,12 @@ static inline void mesh_root_rx_task(void *pv) {
         }
 
         mesh_addr_t from;
-        mesh_addr_t to;
         int flag = 0;
         data.size = sizeof(rx_buf); // reset each call -- recv shrinks this to actual received length
         // Bounded wait rather than portMAX_DELAY so the periodic report
         // above still fires when no traffic is arriving -- which is exactly
         // the case worth reporting.
-        esp_err_t err = esp_mesh_recv_toDS(&from, &to, &data, 1000, &flag, NULL, 0);
+        esp_err_t err = esp_mesh_recv(&from, &data, 1000, &flag, NULL, 0);
         if (err == ESP_OK) {
             if (data.proto == MESH_PROTO_JSON) {
                 // Heartbeat packets exist purely to keep mesh links busy so
@@ -67,12 +64,8 @@ static inline void mesh_root_rx_task(void *pv) {
             }
         } else if (err == ESP_ERR_MESH_TIMEOUT) {
             continue; // no traffic this interval -- expected, keeps reporting
-        } else if (err == ESP_ERR_MESH_RECV_RELEASE) {
-            // Normal control signal (the stack is releasing a pending
-            // toDS read, e.g. around a root change), not a failure.
-            continue;
         } else {
-            ESP_LOGW(MESH_RX_TAG, "esp_mesh_recv_toDS error: 0x%x", err);
+            ESP_LOGW(MESH_RX_TAG, "esp_mesh_recv error: 0x%x", err);
         }
     }
 }
