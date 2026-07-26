@@ -132,6 +132,15 @@ static void mesh_event_handler(void *arg, esp_event_base_t event_base,
         csi_udp_sender_init();
         xTaskCreatePinnedToCore(&mesh_root_rx_task, "mesh_root_rx", 4096,
                                  NULL, 5, &s_mesh_root_rx_handle, 1);
+
+        // Tell the stack this root can reach the external IP network.
+        // Until this is posted, the mesh withholds the upstream toDS
+        // window from descendants, so their MESH_DATA_TODS sends never get
+        // a send window -- which surfaces on leaves as repeating
+        // "[WND-RX] ... 1200 ms timeout" warnings and no data reaching the
+        // UDP target.
+        ESP_ERROR_CHECK(esp_mesh_post_toDS_state(true));
+
         s_is_mesh_root = true;
     } else if (!now_root && s_is_mesh_root) {
         ESP_LOGW(TAG, "This node lost ROOT role -- stopping mesh RX task");

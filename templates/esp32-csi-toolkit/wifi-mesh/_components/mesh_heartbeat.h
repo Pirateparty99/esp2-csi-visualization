@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "csi_udp_sender.h"
+#include "mesh_csi_sender.h"   // reuse mesh_csi_udp_target()
 
 // Heartbeat packets carry no sensing data -- their only purpose is to keep
 // every link in the mesh tree busy with real 802.11 traffic. The ESP32's CSI
@@ -47,11 +48,14 @@ static inline void mesh_heartbeat_task(void *pv) {
         pkt.proto = MESH_PROTO_JSON;
         pkt.tos = MESH_TOS_P2P;
 
+        mesh_addr_t to;
+        mesh_csi_udp_target(&to);
+
         // Best-effort: esp_mesh_send() can transiently fail (e.g. with
         // ESP_ERR_MESH_NO_ROUTE_FOUND right as a parent link comes up).
         // That's fine here -- this traffic exists only to trigger CSI, not
         // to deliver anything, so failures are silently ignored.
-        esp_mesh_send(NULL, &pkt, MESH_DATA_TODS, NULL, 0);
+        esp_mesh_send(&to, &pkt, MESH_DATA_TODS, NULL, 0);
     }
 }
 
