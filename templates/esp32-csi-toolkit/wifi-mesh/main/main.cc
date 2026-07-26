@@ -158,6 +158,7 @@ void mesh_csi_init(void) {
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_ERROR_CHECK(esp_mesh_init());
+    ESP_ERROR_CHECK(esp_mesh_disable_ps());
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         MESH_EVENT, ESP_EVENT_ANY_ID, &mesh_event_handler, NULL, NULL));
