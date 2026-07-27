@@ -190,6 +190,70 @@ to its own range turns arbitrarily small deviations into a confident-looking
 picture, so an idle room and an occupied one look equally dramatic. Saying
 "nothing detected" is more useful than a vivid image of noise.
 
+### Presence and direction readout
+
+Frames that clear the threshold print a one-line summary above the image:
+
+```
+>>> PRESENCE DETECTED  peak 6.9 sigma | centre of change ~(2.7, 4.8)m [centre]
+    | strongest (2.3, 7.0)m | spread 2.5m -> approximate
+```
+
+| Field | Meaning |
+|---|---|
+| `peak N sigma` | Largest single-link change, in standard errors |
+| `centre of change` | Intensity-weighted centroid of the attenuation, in metres |
+| `[bearing]` | That centroid relative to room centre — `near`/`far`, `left`/`right`, or `centre` |
+| `strongest` | The single brightest pixel |
+| `spread` | RMS extent of the attenuation around the centroid |
+
+**`spread` is the field that says how much to believe the position**, and it
+drives the trailing verdict:
+
+| Verdict | Spread | Read it as |
+|---|---|---|
+| `LOCALIZED` | < 15% of room diagonal | A position worth acting on |
+| `approximate` | 15–30% | A region, not a point |
+| `direction only` | > 30% | A bearing at best — the reconstruction is smeared across the room |
+
+At 6 nodes expect `approximate` or `direction only`. Only positive (attenuating)
+pixels contribute, since RTI models a body as blocking a link; negative pixels
+are reconstruction undershoot and would drag the centroid toward nothing
+physical.
+
+### Is it detecting anything? (`--evaluate`)
+
+Watching the live output cannot answer this — the imager renders *something*
+whenever the threshold is crossed, and a picture is persuasive whether or not
+it means anything. `--evaluate` measures both conditions and compares them:
+
+```bash
+python visualizations/rti-aggregator.py --evaluate --room-width 7 --room-height 8
+```
+
+It prompts you to leave the room, records peak sigma per window, prompts you to
+stand inside, records again, then reports:
+
+```
+EMPTY    n= 12  median=   2.1  mean=   2.3  max=   3.1
+OCCUPIED n= 12  median=   7.4  mean=   8.0  min=   4.2
+
+separation (AUC)      : 0.98   (0.5 = indistinguishable, 1.0 = perfect)
+best threshold        : 3.6 sigma -> 96% accuracy
+current --z-threshold : 3.0 sigma
+  at the current setting: 8% false alarms, 0% missed detections
+
+VERDICT: occupancy is clearly detectable.
+```
+
+AUC is the probability that a random occupied window scores above a random
+empty one, computed by direct comparison so it assumes nothing about the shape
+of either distribution. Below ~0.6 the imager is showing noise regardless of
+how convincing the pictures look, and the fix is upstream: check node positions,
+recalibrate, lengthen `--window-seconds`.
+
+Run this after any change to node positions, channel, or calibration.
+
 ### Why regularization cannot be zero
 
 Links share endpoints — with 6 nodes, every link touches two of the same six

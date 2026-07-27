@@ -185,6 +185,54 @@ def build_room_mask(xs, ys, polygon):
     return inside
 
 
+def locate_change(grid, xs, ys, mask_grid):
+    """Summarize where the attenuation sits: (peak_xy, centroid_xy, spread_m).
+
+    Only positive values count. RTI models a body as *attenuating* a link, so
+    negative pixels are the reconstruction's undershoot and including them
+    drags the centroid toward nothing physical.
+
+    Spread is the intensity-weighted RMS distance from the centroid. It is the
+    honest part of the answer: with ~20 links the reconstruction smears along
+    the link ellipses, so a spread comparable to the room size means "a change
+    somewhere in this direction", not a located object.
+    """
+    px, py = np.meshgrid(xs, ys, indexing="ij")
+    vals = np.where(mask_grid & (grid > 0), grid, 0.0)
+    total = float(vals.sum())
+    if total <= 0:
+        return None, None, None
+
+    peak_idx = np.unravel_index(np.argmax(vals), vals.shape)
+    peak = (float(px[peak_idx]), float(py[peak_idx]))
+
+    cx = float((vals * px).sum() / total)
+    cy = float((vals * py).sum() / total)
+
+    d2 = (px - cx) ** 2 + (py - cy) ** 2
+    spread = float(np.sqrt((vals * d2).sum() / total))
+    return peak, (cx, cy), spread
+
+
+def describe_direction(cx, cy, room_width, room_height):
+    """Plain-language bearing of a point relative to the room centre."""
+    mx, my = room_width / 2.0, room_height / 2.0
+    dx, dy = cx - mx, cy - my
+    # Within a quarter of the room of centre, a bearing is not meaningful.
+    if abs(dx) < room_width * 0.125 and abs(dy) < room_height * 0.125:
+        return "centre"
+    parts = []
+    if dy > room_height * 0.125:
+        parts.append("far")
+    elif dy < -room_height * 0.125:
+        parts.append("near")
+    if dx > room_width * 0.125:
+        parts.append("right")
+    elif dx < -room_width * 0.125:
+        parts.append("left")
+    return "-".join(parts) if parts else "centre"
+
+
 def rti_weight_matrix(links, xs, ys, ellipse_width):
     """
     Build the ellipse-model weight matrix W (num_links x num_pixels).
@@ -249,6 +297,121 @@ def reconstruct_image(W, deviations, alpha=1.0):
     return W.T @ np.linalg.solve(WWt + reg, deviations)
 
 
+def collect_peak_zs(sock, baseline, seconds, window_seconds, label):
+    """Collect one peak-sigma value per window over `seconds`.
+
+    This is the quantity the live imager thresholds on, so measuring its
+    distribution under known conditions is what tells you whether the setup
+    can separate occupied from empty at all.
+    """
+    peaks = []
+    live = defaultdict(list)
+    sock.settimeout(1.0)
+    start = time.time()
+    last = start
+    while time.time() - start < seconds:
+        try:
+            data, addr = sock.recvfrom(4096)
+        except socket.timeout:
+            pass
+        else:
+            try:
+                payload = json.loads(data.decode("utf-8", errors="ignore"))
+            except Exception:
+                payload = None
+            if payload:
+                link = identify_link(addr[0], payload)
+                if link is not None:
+                    live[link].append(amplitude_from_csi(payload.get("csi", [])))
+
+        if time.time() - last >= window_seconds:
+            zs = []
+            for l, vals in live.items():
+                if l not in baseline or len(vals) < 5:
+                    continue
+                base_mean, base_std, _ = baseline[l]
+                if base_std <= 0:
+                    continue
+                sem = base_std / np.sqrt(len(vals))
+                if sem > 1e-9:
+                    zs.append(abs((base_mean - float(np.mean(vals))) / sem))
+            if zs:
+                peaks.append(max(zs))
+                print(f"  [{label}] window {len(peaks):2d}: peak {max(zs):6.1f} sigma")
+            live.clear()
+            last = time.time()
+    return np.array(peaks, dtype=np.float64)
+
+
+def run_evaluation(sock, baseline, args):
+    """A/B test: is occupied actually separable from empty?
+
+    Tuning thresholds by watching the live output is guesswork -- the imager
+    always renders something, and a picture is persuasive whether or not it
+    means anything. This measures both conditions and reports whether their
+    distributions actually separate.
+    """
+    print("\n" + "=" * 70)
+    print("EVALUATION: measuring whether occupancy is detectable at all")
+    print("=" * 70)
+
+    input(f"\n[1/2] LEAVE the room, then press Enter to record {args.evaluate_seconds}s of EMPTY... ")
+    print(f"[aggregator] recording EMPTY for {args.evaluate_seconds}s...")
+    empty = collect_peak_zs(sock, baseline, args.evaluate_seconds, args.window_seconds, "empty")
+
+    input(f"\n[2/2] STAND STILL inside the room, then press Enter to record {args.evaluate_seconds}s of OCCUPIED... ")
+    print(f"[aggregator] recording OCCUPIED for {args.evaluate_seconds}s...")
+    occupied = collect_peak_zs(sock, baseline, args.evaluate_seconds, args.window_seconds, "occupied")
+
+    print("\n" + "=" * 70)
+    if empty.size < 3 or occupied.size < 3:
+        print(f"Not enough windows (empty={empty.size}, occupied={occupied.size}).")
+        print("Increase --evaluate-seconds or lower --window-seconds.")
+        return
+
+    print(f"EMPTY    n={empty.size:3d}  median={np.median(empty):6.1f}  "
+          f"mean={empty.mean():6.1f}  max={empty.max():6.1f}")
+    print(f"OCCUPIED n={occupied.size:3d}  median={np.median(occupied):6.1f}  "
+          f"mean={occupied.mean():6.1f}  min={occupied.min():6.1f}")
+
+    # AUC via the Mann-Whitney U identity: the probability that a random
+    # occupied window scores above a random empty one. 0.5 is chance, 1.0 is
+    # perfect separation. Preferred over comparing means because it needs no
+    # assumption about the shape of either distribution.
+    wins = sum((o > e) + 0.5 * (o == e) for o in occupied for e in empty)
+    auc = wins / (occupied.size * empty.size)
+
+    # Best achievable threshold, by accuracy, over the observed values.
+    candidates = np.unique(np.concatenate([empty, occupied]))
+    best_t, best_acc = None, -1.0
+    for t in candidates:
+        acc = ((empty < t).sum() + (occupied >= t).sum()) / (empty.size + occupied.size)
+        if acc > best_acc:
+            best_acc, best_t = acc, t
+
+    print(f"\nseparation (AUC)      : {auc:.2f}   (0.5 = indistinguishable, 1.0 = perfect)")
+    print(f"best threshold        : {best_t:.1f} sigma -> {best_acc:.0%} accuracy")
+    print(f"current --z-threshold : {args.z_threshold:.1f} sigma")
+    fp = (empty >= args.z_threshold).mean()
+    fn = (occupied < args.z_threshold).mean()
+    print(f"  at the current setting: {fp:.0%} false alarms, {fn:.0%} missed detections")
+
+    print()
+    if auc >= 0.9:
+        print("VERDICT: occupancy is clearly detectable.")
+    elif auc >= 0.75:
+        print("VERDICT: detectable but marginal. Expect intermittent misses.")
+    elif auc >= 0.6:
+        print("VERDICT: weak. Barely better than chance -- treat any image with suspicion.")
+    else:
+        print("VERDICT: NOT detectable. The imager is showing noise.")
+        print("  Check node positions are accurate and the baseline is fresh,")
+        print("  then try --window-seconds 10 and recalibrating.")
+    if best_t is not None and abs(best_t - args.z_threshold) > 0.5:
+        print(f"  Consider --z-threshold {best_t:.1f}")
+    print("=" * 70)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=5566)
@@ -267,6 +430,12 @@ def main():
         "as 1/sqrt(samples), so longer windows detect smaller changes but "
         "respond more slowly.",
     )
+    parser.add_argument(
+        "--evaluate",
+        action="store_true",
+        help="A/B test empty vs occupied and report whether they separate",
+    )
+    parser.add_argument("--evaluate-seconds", type=int, default=60)
     parser.add_argument(
         "--alpha",
         type=float,
@@ -421,6 +590,10 @@ def main():
             f"{args.max_link_cv:.0%} at rest; {len(baseline)} remain."
         )
 
+    if args.evaluate:
+        run_evaluation(sock, baseline, args)
+        return
+
     sock.settimeout(1.0)
     last_image_time = time.time()
     live_amps = defaultdict(list)
@@ -502,6 +675,34 @@ def main():
                         + ", ".join(f"{l}={d:+.1f}" for l, d in strongest)
                     )
                     mask_grid = room_mask.reshape(len(xs), len(ys))
+
+                    peak, centroid, spread = locate_change(
+                        grid, xs, ys, mask_grid
+                    )
+                    if centroid is not None:
+                        bearing = describe_direction(
+                            centroid[0], centroid[1], args.room_width, args.room_height
+                        )
+                        # Spread against room scale decides how much to claim.
+                        room_scale = np.hypot(args.room_width, args.room_height)
+                        if spread < room_scale * 0.15:
+                            quality = "LOCALIZED"
+                        elif spread < room_scale * 0.30:
+                            quality = "approximate"
+                        else:
+                            quality = "direction only"
+                        print(
+                            f"[aggregator] >>> PRESENCE DETECTED  "
+                            f"peak {peak_z:.1f} sigma | "
+                            f"centre of change ~({centroid[0]:.1f}, {centroid[1]:.1f})m "
+                            f"[{bearing}] | strongest ({peak[0]:.1f}, {peak[1]:.1f})m | "
+                            f"spread {spread:.1f}m -> {quality}"
+                        )
+                    else:
+                        print(
+                            f"[aggregator] >>> change detected (peak {peak_z:.1f} sigma) "
+                            f"but no positive attenuation to localize"
+                        )
 
                     # Fixed scale, anchored at zero. Rescaling each frame to
                     # its own min/max was the other half of "the image changes
