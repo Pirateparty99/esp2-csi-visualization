@@ -121,6 +121,8 @@ Prints a coarse ASCII heatmap of signal-attenuation change every 3 seconds. Dens
 | `--calibrate-seconds` | `20` | Duration of calibration capture |
 | `--window-seconds` | `5.0` | Seconds averaged per frame. Noise in the mean falls as 1/√samples, so longer windows detect smaller changes but respond more slowly |
 | `--z-threshold` | `3.0` | Standard errors a link must move to count as real. Below this the frame reports no significant change instead of rendering |
+| `--alpha` | `0.1` | Regularization, as a fraction of the data term. Higher is smoother and more conservative; lower fits measurements more closely and amplifies noise. Cannot be 0 — see below |
+| `--max-link-cv` | `0.15` | Drop links whose calibrated amplitude varies by more than this fraction of their mean |
 | `--room-width` | `4.0` | Grid width in meters |
 | `--room-height` | `3.0` | Grid height in meters |
 
@@ -187,6 +189,22 @@ This matters because the image is scaled to its own data. Rescaling every frame
 to its own range turns arbitrarily small deviations into a confident-looking
 picture, so an idle room and an occupied one look equally dramatic. Saying
 "nothing detected" is more useful than a vivid image of noise.
+
+### Why regularization cannot be zero
+
+Links share endpoints — with 6 nodes, every link touches two of the same six
+positions — so the rows of the weight matrix are linearly dependent and `W Wᵀ`
+is rank deficient. Measured on this deployment its condition number is **3×10¹⁸**
+unregularized, which is numerically singular: the reconstruction is then
+dominated by floating-point error rather than by the measurements, and shows up
+as large room-spanning shapes that flip between frames.
+
+`--alpha` is a *fraction* of the data term, not an absolute value, because the
+magnitude of `W Wᵀ` depends on grid size, resolution and ellipse width. At the
+default `0.1` the condition number drops to ~83.
+
+If images look wild and unstable, raise it (`--alpha 0.3`). If everything looks
+flat and featureless, lower it (`--alpha 0.03`).
 
 ### Reading the output
 

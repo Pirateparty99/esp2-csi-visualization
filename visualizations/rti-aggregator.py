@@ -230,8 +230,22 @@ def reconstruct_image(W, deviations, alpha=1.0):
     makes a 3s refresh possible at all.
     """
     num_links = W.shape[0]
-    reg = alpha * np.eye(num_links, dtype=np.float32)
     WWt = W @ W.T
+
+    # alpha is a FRACTION of the data term, not an absolute value.
+    #
+    # An absolute alpha cannot work: the magnitude of W W^T depends on grid
+    # size, resolution and ellipse width, so a constant that regularizes one
+    # room barely touches another. Measured on a 7x8m grid at 0.1m, the
+    # diagonal averages ~279, so the previous hardcoded alpha=1.0 supplied
+    # 0.4% of the data scale -- essentially unregularized.
+    #
+    # That matters because W W^T is rank deficient here. Links share
+    # endpoints, so rows are linearly dependent and the unregularized solve is
+    # singular. Ill-conditioning of that kind is what turns small measurement
+    # noise into large, room-spanning, sign-flipping structure.
+    scale = float(np.mean(np.diag(WWt)))
+    reg = max(alpha * scale, 1e-6) * np.eye(num_links, dtype=np.float32)
     return W.T @ np.linalg.solve(WWt + reg, deviations)
 
 
@@ -252,6 +266,23 @@ def main():
         help="Seconds of readings averaged per frame. Noise in the mean falls "
         "as 1/sqrt(samples), so longer windows detect smaller changes but "
         "respond more slowly.",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.1,
+        help="Regularization, as a fraction of the data term. Higher gives "
+        "smoother, more conservative images; lower fits the measurements more "
+        "closely and amplifies noise. W W^T is rank deficient with shared-"
+        "endpoint links, so this cannot be 0.",
+    )
+    parser.add_argument(
+        "--max-link-cv",
+        type=float,
+        default=0.15,
+        help="Exclude links whose calibrated amplitude varies by more than "
+        "this fraction of their mean. Unstable links dominate the solution "
+        "without carrying information.",
     )
     parser.add_argument(
         "--z-threshold",
@@ -375,6 +406,21 @@ def main():
             "[aggregator] WARNING: no baseline found. Run with --calibrate first for meaningful results."
         )
 
+    # Drop links too noisy to contribute. They are not merely unhelpful:
+    # an unstable link presents large deviations every frame, and with a
+    # rank-deficient system those dominate the reconstruction.
+    unstable = {
+        l for l, (mean, std, _) in baseline.items()
+        if mean > 0 and std / mean > args.max_link_cv
+    }
+    if unstable:
+        for l in unstable:
+            del baseline[l]
+        print(
+            f"[aggregator] Excluded {len(unstable)} link(s) varying >"
+            f"{args.max_link_cv:.0%} at rest; {len(baseline)} remain."
+        )
+
     sock.settimeout(1.0)
     last_image_time = time.time()
     live_amps = defaultdict(list)
@@ -438,7 +484,7 @@ def main():
 
                     W = rti_weight_matrix(links, xs, ys, ELLIPSE_WIDTH)
                     W = W * room_mask  # zero the columns outside the room
-                    image = reconstruct_image(W, deviations)
+                    image = reconstruct_image(W, deviations, alpha=args.alpha)
                     grid = image.reshape(len(xs), len(ys))
                     # Print a crude ASCII heatmap for a quick sanity check
                     print(
