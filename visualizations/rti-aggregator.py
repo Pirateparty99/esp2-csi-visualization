@@ -40,8 +40,8 @@ from collections import defaultdict
 # Expected format:
 # {
 #   "stations": {
-#     "192.168.4.2": [4.0, 0.0],
-#     "192.168.4.3": [4.0, 3.0]
+#     "aa:bb:cc:dd:ee:01": [4.0, 0.0],
+#     "aa:bb:cc:dd:ee:02": [4.0, 3.0]
 #   },
 #   "transmitters": {
 #     "a1:b2:c3:d4:e5:00": [0.0, 0.0],
@@ -79,7 +79,9 @@ def load_nodes_config(path):
 
     with open(path, "r") as f:
         raw = json.load(f)
-    stations = {ip: tuple(pos) for ip, pos in raw.get("stations", {}).items()}
+    # Station keys are MACs now (matching the "node" field). IP keys from
+    # older configs still load, so both can coexist during a migration.
+    stations = {key.lower(): tuple(pos) for key, pos in raw.get("stations", {}).items()}
     transmitters = {
         mac.lower(): tuple(pos) for mac, pos in raw.get("transmitters", {}).items()
     }
@@ -108,11 +110,30 @@ def amplitude_from_csi(csi_list):
 
 
 def identify_link(source_ip, payload):
-    """Return (tx_pos, rx_pos) for a packet, or None if unrecognized."""
-    rx_pos = IP_TO_POS.get(source_ip)
+    """Return (tx_pos, rx_pos) for a packet, or None if unrecognized.
+
+    The receiver is identified by the payload's "node" field, not the source
+    IP. Source IP does not work: when the collector sits behind a relay every
+    datagram arrives from the relay's address, and nodes take DHCP leases
+    rather than fixed addresses anyway. "node" is the capturing node's own MAC
+    and is carried in the reading itself.
+
+    Falls back to the source IP so configs predating the "node" field, and any
+    node not yet reflashed, still resolve.
+    """
+    node_mac = payload.get("node", "").lower()
+    rx_pos = STATIONS.get(node_mac) if node_mac else None
+    if rx_pos is None:
+        rx_pos = STATIONS.get(source_ip)
+
     tx_mac = payload.get("mac", "").lower()
     tx_pos = MAC_TO_POS.get(tx_mac)
+
     if rx_pos is None or tx_pos is None:
+        return None
+    if rx_pos == tx_pos:
+        # A node hearing its own transmissions is a zero-length link and
+        # carries no spatial information.
         return None
     return (tx_pos, rx_pos)
 
@@ -154,12 +175,23 @@ def reconstruct_image(W, deviations, alpha=1.0):
     """
     Solve regularized least squares: image = (W^T W + alpha*I)^-1 W^T y
     Returns a flat pixel array (reshape by caller using grid dims).
+
+    Uses the dual (kernel) form:
+
+        (W^T W + aI)^-1 W^T  ==  W^T (W W^T + aI)^-1
+
+    These are exactly equal by the push-through identity, but the left side
+    inverts a num_pixels x num_pixels matrix and the right a
+    num_links x num_links one. RTI always has far more pixels than links --
+    a 7x8m room at 0.1m is 5600 pixels against ~20 links -- so the primal
+    form solves a 5600x5600 system per frame, measured at 116s. The dual is
+    a 20x20 solve and returns in well under a millisecond, which is what
+    makes a 3s refresh possible at all.
     """
-    WtW = W.T @ W
-    reg = alpha * np.eye(WtW.shape[0], dtype=np.float32)
-    Wty = W.T @ deviations
-    image = np.linalg.solve(WtW + reg, Wty)
-    return image
+    num_links = W.shape[0]
+    reg = alpha * np.eye(num_links, dtype=np.float32)
+    WWt = W @ W.T
+    return W.T @ np.linalg.solve(WWt + reg, deviations)
 
 
 def main():

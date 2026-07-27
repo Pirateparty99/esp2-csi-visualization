@@ -12,3 +12,7 @@ third_party
 nodes_config.json
 rti_baseline.json
 templates/rti-nodes-config.json
+
+# Python bytecode
+__pycache__/
+*.pyc
