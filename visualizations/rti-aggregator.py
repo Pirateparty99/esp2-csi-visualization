@@ -396,6 +396,38 @@ def run_evaluation(sock, baseline, args):
     fn = (occupied < args.z_threshold).mean()
     print(f"  at the current setting: {fp:.0%} false alarms, {fn:.0%} missed detections")
 
+    # The distributions usually overlap, so there is no threshold that is
+    # simply "correct" -- only different trades. Report the ends of that trade
+    # so the choice can be made against how the output will be used.
+    quiet_t = float(empty.max()) + 0.1          # no false alarm on this sample
+    quiet_miss = (occupied < quiet_t).mean()
+    sens_t = float(occupied.min()) - 0.1        # no miss on this sample
+    sens_fp = (empty >= sens_t).mean()
+    print("\noperating points:")
+    print(f"  fewest false alarms : --z-threshold {quiet_t:.1f} "
+          f"-> {quiet_miss:.0%} missed")
+    print(f"  fewest misses       : --z-threshold {max(sens_t, 0.1):.1f} "
+          f"-> {sens_fp:.0%} false alarms")
+    overlap_lo, overlap_hi = float(occupied.min()), float(empty.max())
+    if overlap_lo < overlap_hi:
+        print(f"  distributions overlap between {overlap_lo:.1f} and "
+              f"{overlap_hi:.1f} sigma; no threshold separates them cleanly")
+
+    if min(empty.size, occupied.size) < 20:
+        print(
+            f"\nNOTE: only {min(empty.size, occupied.size)} windows per condition. "
+            f"AUC is coarse at this sample size -- raise --evaluate-seconds "
+            f"before treating small differences as meaningful."
+        )
+    # A wide occupied spread means detectability depends strongly on where the
+    # person stood, which is a coverage property of the node layout.
+    if occupied.size >= 5 and occupied.std() > occupied.mean() * 0.6:
+        print(
+            "NOTE: occupied readings vary widely, so some positions register "
+            "far more strongly than others. Re-run --evaluate standing in "
+            "different spots to find the weak areas in the node layout."
+        )
+
     print()
     if auc >= 0.9:
         print("VERDICT: occupancy is clearly detectable.")
