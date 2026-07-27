@@ -115,6 +115,10 @@ void csi_init(char *type) {
     project_type = type;
 
 #ifdef CONFIG_SHOULD_COLLECT_CSI
+    // Stamp every reading with this node's identity. Called here so all
+    // project types get it, and after esp_wifi_start() so the MAC is readable.
+    csi_node_id_init();
+
     ESP_ERROR_CHECK(esp_wifi_set_csi(1));
 
     wifi_csi_config_t configuration_csi;

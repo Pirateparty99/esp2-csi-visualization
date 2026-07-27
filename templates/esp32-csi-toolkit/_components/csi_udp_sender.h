@@ -2,6 +2,7 @@
 #define CSI_UDP_SENDER_H
 #include <cstring>
 #include "esp_log.h"
+#include "esp_wifi.h"
 #include "esp_wifi_types.h"
 #include "lwip/sockets.h"
 #include "sdkconfig.h"
@@ -22,6 +23,31 @@ static int csi_udp_sock = -1;
 static struct sockaddr_in csi_udp_dest_addr;
 #define CSI_UDP_MAX_VALUES    128
 #define CSI_UDP_JSON_BUF_SIZE 2048
+
+// Identity of the node that *observed* a reading.
+//
+// wifi_csi_info_t.mac is the source MAC of the measured frame -- the peer that
+// transmitted it, not the node reporting it. Without this field a collector
+// cannot attribute a reading to a node, and the datagram's source IP is no
+// help either: on a mesh every reading arrives from the root regardless of
+// which node captured it.
+//
+// With both, each reading names a directed link: node observed a frame from
+// mac.
+static char csi_node_mac[18] = "00:00:00:00:00:00";
+
+// Call once after esp_wifi_start(); the STA MAC is stable for the life of the
+// device, so this is read a single time rather than per capture.
+static inline void csi_node_id_init(void) {
+    uint8_t m[6] = {0};
+    if (esp_wifi_get_mac(WIFI_IF_STA, m) == ESP_OK) {
+        snprintf(csi_node_mac, sizeof(csi_node_mac),
+                 "%02x:%02x:%02x:%02x:%02x:%02x",
+                 m[0], m[1], m[2], m[3], m[4], m[5]);
+    } else {
+        ESP_LOGW(CSI_UDP_TAG, "could not read STA MAC; readings will be unattributed");
+    }
+}
 
 static inline void csi_udp_sender_init(void) {
     if (csi_udp_sock >= 0) {
@@ -50,9 +76,12 @@ static inline int csi_to_json(const wifi_csi_info_t *data, char *buf, size_t buf
     if (n > CSI_UDP_MAX_VALUES) {
         n = CSI_UDP_MAX_VALUES;
     }
+    // "node" is the observer, "mac" the transmitter of the measured frame.
     offset += snprintf(buf + offset, buf_size - offset,
-        "{\"type\":\"CSI_DATA\",\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\","
+        "{\"type\":\"CSI_DATA\",\"node\":\"%s\","
+        "\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\","
         "\"rssi\":%d,\"len\":%d,\"csi\":[",
+        csi_node_mac,
         data->mac[0], data->mac[1], data->mac[2],
         data->mac[3], data->mac[4], data->mac[5],
         data->rx_ctrl.rssi,
