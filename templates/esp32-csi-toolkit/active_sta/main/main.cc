@@ -171,6 +171,22 @@ void station_init() {
 
     esp_wifi_set_ps(WIFI_PS_NONE);
 
+#if CONFIG_CSI_PROMISCUOUS
+    // Keep the station association (that link to the AP is the primary one)
+    // and additionally sniff data frames on the channel, so this node also
+    // measures its neighbours' uplink traffic. That yields node<->node links
+    // alongside node<->AP ones without transmitting anything extra.
+    //
+    // Data frames only: management/control frames carry no useful CSI here
+    // and would multiply the callback rate for nothing.
+    const wifi_promiscuous_filter_t csi_filt = {
+            .filter_mask = WIFI_PROMIS_FILTER_MASK_DATA
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&csi_filt));
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+    ESP_LOGI(TAG, "Promiscuous CSI enabled (node<->node links in addition to node<->AP)");
+#endif
+
     ESP_LOGI(TAG, "connect to ap SSID:%s password:%s", ESP_WIFI_SSID, ESP_WIFI_PASS);
 }
 

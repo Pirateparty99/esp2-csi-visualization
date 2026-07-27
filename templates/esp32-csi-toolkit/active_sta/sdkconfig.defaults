@@ -56,3 +56,6 @@ WIFI_PROV_AUTOSTOP_TIMEOUT=30
 SEND_CSI_TO_UDP=true
 UDP_TARGET_IP="192.168.4.1"
 UDP_TARGET_PORT=5566
+
+# Also record CSI from other nodes' frames (adds node<->node links).
+CSI_PROMISCUOUS=true

@@ -97,4 +97,24 @@ menu "ESP32 CSI Tool Config"
         default 5566
         help
             UDP port to forward CSI data on.
+    config CSI_PROMISCUOUS
+        depends on SHOULD_COLLECT_CSI
+        bool "Also capture CSI from other nodes' frames"
+        default "y"
+        help
+            Associated as a station, a node normally only produces CSI for
+            frames the AP sends it, which yields a star of node<->AP links.
+
+            Enabling promiscuous capture additionally records CSI from other
+            nodes' uplink frames on the same channel, adding node<->node
+            links without any extra transmissions -- the traffic each node
+            already sends to the AP is what its neighbours measure.
+
+            Every reading carries "node" (observer) and "mac" (transmitter),
+            so the two link types are distinguishable at the collector.
+
+            Costs: the CSI callback fires for all data frames on the channel,
+            including other networks, so expect a much higher capture rate.
+            SEND_CSI_TO_UDP is rate limited, and the collector can filter on
+            "mac" to keep only known nodes.
 endmenu

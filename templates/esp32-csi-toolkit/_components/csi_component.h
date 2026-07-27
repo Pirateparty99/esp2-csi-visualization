@@ -6,7 +6,12 @@
 #include <sstream>
 #include <iostream>
 #include "csi_udp_sender.h"
+#if CONFIG_SEND_CSI_TO_MESH
+// Only the wifi-mesh project ships this header, and only that project's
+// overlay deploys it. Including it unconditionally makes active_sta and
+// active_ap builds fail on a clean checkout that has never built the mesh.
 #include "mesh_csi_sender.h"
+#endif
 
 char *project_type;
 
