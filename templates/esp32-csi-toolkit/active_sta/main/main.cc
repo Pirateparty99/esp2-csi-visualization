@@ -29,6 +29,7 @@
 #include "../../_components/input_component.h"
 #include "../../_components/sockets_component.h"
 #include "../../_components/csi_udp_sender.h"
+#include "../../_components/channel_survey.h"
 
 #define ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
 #define ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
@@ -65,6 +66,10 @@
 
 static EventGroupHandle_t s_wifi_event_group;
 static esp_netif_t *s_sta_netif = NULL;
+// WIFI_EVENT_STA_START fires inside esp_wifi_start(), and connecting there
+// would race the channel survey -- scanning while associating disrupts both.
+// station_init() sets this and connects explicitly once the survey is done.
+static bool s_may_connect = false;
 const int WIFI_CONNECTED_BIT = BIT0;
 
 static const char *TAG = "Active CSI collection (Station)";
@@ -112,7 +117,9 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         csi_udp_sender_init();
 #endif
 #endif
-        esp_wifi_connect();
+        if (s_may_connect) {
+            esp_wifi_connect();
+        }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         ESP_LOGI(TAG, "Retry connecting to the AP");
         esp_wifi_connect();
@@ -171,6 +178,13 @@ void station_init() {
 
     esp_wifi_set_ps(WIFI_PS_NONE);
 
+#if CONFIG_CHANNEL_SURVEY
+    // Before associating: a scan while connected disrupts the link, and the
+    // results are only useful for a deployment-time decision anyway.
+    channel_survey_run();
+#endif
+
+
 #if CONFIG_CSI_PROMISCUOUS
     // Keep the station association (that link to the AP is the primary one)
     // and additionally sniff data frames on the channel, so this node also
@@ -186,6 +200,13 @@ void station_init() {
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
     ESP_LOGI(TAG, "Promiscuous CSI enabled (node<->node links in addition to node<->AP)");
 #endif
+
+    // Connect last. Enabling sniffing on an already-associated station drops
+    // the link (observed: "state: run -> init" followed by a reconnect), and
+    // scanning during association disrupts both. Survey, then configure the
+    // radio, then associate once.
+    s_may_connect = true;
+    esp_wifi_connect();
 
     ESP_LOGI(TAG, "connect to ap SSID:%s password:%s", ESP_WIFI_SSID, ESP_WIFI_PASS);
 }

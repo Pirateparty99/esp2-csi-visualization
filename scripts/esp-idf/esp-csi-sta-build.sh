@@ -209,6 +209,7 @@ apply_toolkit_overlay() {
     local files=(
         "_components/csi_component.h"
         "_components/csi_udp_sender.h"
+        "_components/channel_survey.h"
         "active_sta/main/main.cc"
         "active_sta/main/Kconfig.projbuild"
     )

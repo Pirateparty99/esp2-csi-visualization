@@ -59,3 +59,6 @@ UDP_TARGET_PORT=5566
 
 # Also record CSI from other nodes' frames (adds node<->node links).
 CSI_PROMISCUOUS=true
+
+# Log a 2.4GHz congestion survey at boot (advisory; never changes channel).
+CHANNEL_SURVEY=true

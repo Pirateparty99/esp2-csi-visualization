@@ -97,6 +97,21 @@ menu "ESP32 CSI Tool Config"
         default 5566
         help
             UDP port to forward CSI data on.
+    config CHANNEL_SURVEY
+        bool "Log a 2.4GHz channel survey at boot"
+        default "y"
+        help
+            Scans all channels once at startup and logs how many APs sit on
+            each, the strongest signal per channel, and which of 1/6/11 looks
+            quietest allowing for 20MHz overlap.
+
+            Advisory only -- the channel is never changed. CSI is frequency
+            dependent, so a baseline captured on one channel is meaningless on
+            another, and node-to-node links need every node on the same
+            channel. Use this to choose a channel at deployment, pin it on the
+            AP and in WIFI_CHANNEL, then recalibrate.
+
+            Runs before associating and adds roughly a second to boot.
     config CSI_PROMISCUOUS
         depends on SHOULD_COLLECT_CSI
         bool "Also capture CSI from other nodes' frames"
