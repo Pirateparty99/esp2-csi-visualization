@@ -120,10 +120,15 @@ static inline void mesh_tx_task(void *pv) {
         }
 
         if (esp_mesh_is_root()) {
-            // No parent to relay through. Keep the root's own uplink busy so
-            // it still captures CSI; anything from below is handled by
-            // mesh_root_rx_task.
-            csi_udp_sender_ping();
+            // Nothing to send: the root has no parent to relay through, and
+            // its own captures go straight out from mesh_csi_sender_send().
+            //
+            // Deliberately no filler traffic here. The root used to ping the
+            // UDP target to keep its uplink busy, but that put 1-byte
+            // non-CSI datagrams into the same port as real readings -- about
+            // a quarter of everything the collector received. The root still
+            // captures plenty of CSI from its children's upstream traffic,
+            // which the heartbeat below keeps flowing.
             vTaskDelay(idle_wait);
             continue;
         }
