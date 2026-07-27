@@ -16,7 +16,7 @@ captures CSI, serializes it to JSON, and sends it over UDP to the Pi on port
             ┌───────────────────────────┐
             │  Raspberry Pi             │
             │  AP + DHCP                │
-            │  192.168.4.1   channel 6  │
+            │  192.168.4.1   channel 11 │
             └─────────────┬─────────────┘
                           │  optional relay :5566
                           ▼

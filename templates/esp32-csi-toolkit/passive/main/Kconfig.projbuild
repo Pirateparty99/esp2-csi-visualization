@@ -2,7 +2,7 @@ menu "ESP32 CSI Tool Config"
 
     config WIFI_CHANNEL
         int "WiFi Channel"
-        default 6
+        default 11
         help
             Select the WiFi channel to listen to passively. In North America, valid channels are {1,2,3,...,10,11}.
 

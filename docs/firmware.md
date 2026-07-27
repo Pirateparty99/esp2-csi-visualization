@@ -33,9 +33,14 @@ never `third_party/` directly.
 ## Channel selection
 
 CSI is frequency dependent: the channel response on one channel tells you
-nothing about another. A baseline captured on channel 6 is meaningless if a node
-later moves to channel 11. Node-to-node links also require every node to sit on
-the *same* channel, since promiscuous capture only hears the current one.
+nothing about another. A baseline captured on one channel is meaningless once a
+node moves to a different one. Node-to-node links also require every node to sit
+on the *same* channel, since promiscuous capture only hears the current one.
+
+**This deployment is pinned to channel 11**, in the Pi's hotspot
+(`templates/raspberrypi-configs/enable-nmcli-hotspot.sh`) and in `WIFI_CHANNEL`
+for every firmware project. A site survey found channels 1 and 6 each carrying
+~12 APs within +/-4 channels, against a single -75 dBm neighbour on 11.
 
 **So do not enable dynamic channel switching.** Pick a quiet channel once at
 deployment, pin it, and recalibrate. On the Pi, survey the band with:
