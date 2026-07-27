@@ -46,6 +46,8 @@ MESH_MAX_LAYER=6
 MESH_ROUTER_SSID="espeon"
 MESH_ROUTER_PASSWORD="espeon123!"
 MESH_AP_PASSWORD="espeon123!"
+# Must not collide with the router / UDP_TARGET_IP subnet (see Kconfig help).
+MESH_AP_IP="192.168.99.1"
 
 
 PACKET_RATE=20

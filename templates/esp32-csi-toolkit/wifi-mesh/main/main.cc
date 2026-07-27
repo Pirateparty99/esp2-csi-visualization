@@ -14,6 +14,7 @@
 
 #include "lwip/err.h"
 #include "lwip/sys.h"
+#include "lwip/inet.h"
 
 #include "../../_components/nvs_component.h"
 #include "../../_components/sd_component.h"
@@ -68,6 +69,9 @@
 #endif
 #ifndef CONFIG_MESH_AP_PASSWORD
 #define CONFIG_MESH_AP_PASSWORD "meshpass123"
+#endif
+#ifndef CONFIG_MESH_AP_IP
+#define CONFIG_MESH_AP_IP "192.168.99.1"
 #endif
 
 static EventGroupHandle_t s_wifi_event_group;
@@ -174,6 +178,23 @@ void mesh_csi_init(void) {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(esp_netif_create_default_wifi_mesh_netifs(&s_mesh_netif_sta, &s_mesh_netif_ap));
+
+    // Move the mesh softAP off ESP-IDF's default 192.168.4.1. That default
+    // collides with the usual Raspberry Pi hotspot layout (Pi at 192.168.4.1
+    // serving 192.168.4.x), and the collision is silent but fatal: the
+    // root's sendto() to the UDP target matches its own softAP address, so
+    // lwIP delivers the packet locally instead of over the uplink and
+    // sendto() still returns success. Nothing ever reaches the target.
+    {
+        esp_netif_ip_info_t ap_ip = {};
+        ap_ip.ip.addr      = ipaddr_addr(CONFIG_MESH_AP_IP);
+        ap_ip.gw.addr      = ipaddr_addr(CONFIG_MESH_AP_IP);
+        ap_ip.netmask.addr = ipaddr_addr("255.255.255.0");
+        // The mesh netif helper already stops the AP DHCP server, which is a
+        // precondition for reassigning the address.
+        ESP_ERROR_CHECK(esp_netif_set_ip_info(s_mesh_netif_ap, &ap_ip));
+        ESP_LOGI(TAG, "Mesh softAP IP set to %s", CONFIG_MESH_AP_IP);
+    }
 
     wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&wifi_cfg));
