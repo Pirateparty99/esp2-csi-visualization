@@ -12,11 +12,17 @@ first by default, so a stale binary is never silently reflashed; pass
 `--skip-build` to flash the existing one.
 
 ```bash
-./scripts/esp-idf/esp-sta-flash.sh                 # active_sta (rebuild + flash)
-./scripts/esp-idf/esp-sta-flash.sh --skip-build    # flash existing binary
-./scripts/esp-idf/esp-ap-flash.sh                  # active_ap
-./scripts/esp-idf/esp-mesh-flash.sh                # wifi-mesh
+./scripts/esp-idf/esp-sta-flash.sh -p /dev/ttyUSB0              # active_sta
+./scripts/esp-idf/esp-sta-flash.sh -p /dev/ttyUSB0 --skip-build # skip rebuild
+./scripts/esp-idf/esp-ap-flash.sh  -p /dev/ttyUSB0              # active_ap
+./scripts/esp-idf/esp-mesh-flash.sh -p /dev/ttyUSB0             # wifi-mesh
 ```
+
+`-p` is optional with a single board attached and **required** with more than
+one. Without it, `idf.py` auto-detects and silently picks the first port, so
+flashing several boards in a row reflashes the same one repeatedly and leaves
+the others on stale firmware — which surfaces later as nodes that will not
+associate. The scripts refuse to guess.
 
 Each prints the board's MAC address on completion — that value is what appears
 as `node` in the JSON, and what goes in the config file.

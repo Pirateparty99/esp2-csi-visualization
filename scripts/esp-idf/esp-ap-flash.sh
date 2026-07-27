@@ -2,8 +2,44 @@
 set -euo pipefail
 
 SKIP_BUILD=0
-if [ "${1:-}" = "--skip-build" ]; then
-    SKIP_BUILD=1
+PORT=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --skip-build) SKIP_BUILD=1; shift ;;
+        -p|--port)    PORT="${2:-}"; shift 2 ;;
+        -h|--help)
+            echo "Usage: $0 [--skip-build] [-p /dev/ttyUSB0]"
+            echo "  --skip-build   flash the existing binary instead of rebuilding"
+            echo "  -p, --port     serial port to flash. Required when several boards"
+            echo "                 are attached, so the wrong one is never flashed."
+            exit 0 ;;
+        *) echo "Unknown argument: $1 (try --help)" >&2; exit 1 ;;
+    esac
+done
+
+# With more than one board attached, idf.py's auto-detect silently picks the
+# first. Flashing a multi-node deployment that way reflashes one board N times
+# and leaves the rest on stale firmware, which then shows up much later as
+# nodes that will not associate. Refuse to guess instead.
+if [ -z "$PORT" ]; then
+    PORTS="$(ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true)"
+    COUNT="$(printf '%s
+' "$PORTS" | grep -c . || true)"
+    if [ "$COUNT" -gt 1 ]; then
+        echo "ERROR: several serial ports detected; specify one with -p:" >&2
+        printf '%s
+' "$PORTS" | sed 's/^/  /' >&2
+        echo "  e.g. $0 -p $(printf '%s
+' "$PORTS" | head -n1)" >&2
+        exit 1
+    fi
+    PORT="$(printf '%s
+' "$PORTS" | head -n1)"
+fi
+
+if [ -z "$PORT" ]; then
+    echo "ERROR: no serial port detected. Plug in a board or pass -p." >&2
+    exit 1
 fi
 
 # ESP-IDF version 4.3 required by the ESP32 CSI Toolkit repo
@@ -45,14 +81,14 @@ fi
 
 cd "$PROJECT_DIR"
 
-echo "Flashing from: $(pwd)"
+echo "Flashing from: $(pwd)  ->  $PORT"
 
-idf.py flash
+idf.py -p "$PORT" flash
 
 echo "Firmware flashed. Below is the board's MAC Address."
 
 printf '=%.0s' {1..100}
 echo ""
-esptool.py read_mac | grep -m 1 "MAC:"
+esptool.py -p "$PORT" read_mac | grep -m 1 "MAC:"
 printf '=%.0s' {1..100}
 echo ""
