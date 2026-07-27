@@ -119,8 +119,40 @@ Prints a coarse ASCII heatmap of signal-attenuation change every 3 seconds. Dens
 | `--bind` | `0.0.0.0` | Bind address |
 | `--calibrate` | off | Run in calibration mode instead of live sensing |
 | `--calibrate-seconds` | `20` | Duration of calibration capture |
-| `--room-width` | `4.0` | Room width in meters |
-| `--room-height` | `3.0` | Room height in meters |
+| `--window-seconds` | `5.0` | Seconds averaged per frame. Noise in the mean falls as 1/√samples, so longer windows detect smaller changes but respond more slowly |
+| `--z-threshold` | `3.0` | Standard errors a link must move to count as real. Below this the frame reports no significant change instead of rendering |
+| `--room-width` | `4.0` | Grid width in meters |
+| `--room-height` | `3.0` | Grid height in meters |
+
+### Sizing the grid to your nodes
+
+`--room-width` and `--room-height` define the reconstruction grid, and **every
+node must fall inside it**. The defaults (4.0 × 3.0) are smaller than most real
+deployments, so they almost always need setting.
+
+Take the largest `x` and largest `y` in your node config and round up:
+
+```bash
+# nodes spanning 6.0m x 7.1m
+python visualizations/rti-aggregator.py --room-width 7 --room-height 8
+```
+
+The script refuses to run if any node lies outside, and tells you what to pass:
+
+```
+[aggregator] ERROR: 5 node position(s) fall outside the 4.0m x 3.0m room:
+[aggregator]   b4:bf:e9:60:b5:24 at (4.4, 7.1)
+[aggregator] Node positions span 6.0m x 7.1m. Pass at least
+             --room-width 6.0 --room-height 7.1, or correct the positions.
+```
+
+This used to fail silently, and the failure was easy to mistake for a working
+system: off-grid nodes still contribute rows to the weight matrix, but their
+ellipses land mostly outside it, so the output becomes smeared diagonal streaks
+that look like structure and track nothing.
+
+Use the **same** dimensions for `--calibrate` and for live runs. A baseline
+captured on one grid does not apply to another.
 
 ## Diagnostics
 Use `tests/diagnose_links.py` to verify which (IP, MAC) link pairs are actually arriving before trusting calibration results:
@@ -128,8 +160,61 @@ Use `tests/diagnose_links.py` to verify which (IP, MAC) link pairs are actually 
 python tests/diagnose_links.py --count 30
 ```
 
+## Sensitivity and noise
+
+CSI amplitude from an ESP32 is noisy, and the noise is close in size to the
+effect being measured. Measured on this deployment with nothing moving, a
+link's window mean wandered by about **0.45 on a mean of ~20** — roughly 2%.
+Changes caused by a person are often the same order.
+
+**Deviations are reported in sigma, not raw amplitude.** Each link's change is
+divided by its own standard error from calibration. Links differ in how noisy
+they are, so raw amplitude cannot be thresholded — a quiet link moving slightly
+and a noisy link idling look identical. Calibration flags links too unstable to
+contribute:
+
+```
+[aggregator] NOTE: 2/20 links vary by >15% at rest; they will contribute little.
+```
+
+**Frames below `--z-threshold` are not rendered:**
+
+```
+[aggregator] no significant change (peak 2.5 sigma < 3.0, 19 links)
+```
+
+This matters because the image is scaled to its own data. Rescaling every frame
+to its own range turns arbitrarily small deviations into a confident-looking
+picture, so an idle room and an occupied one look equally dramatic. Saying
+"nothing detected" is more useful than a vivid image of noise.
+
+### Reading the output
+
+What to expect at this scale, and what not to:
+
+- **Presence detection works.** Peak sigma should sit below the threshold when
+  the room is still and rise clearly when someone moves.
+- **Localization is weak.** With ~20 links against 5600 pixels the problem is
+  badly under-determined, so the reconstruction smears along the link ellipses.
+  Expect a rough "something changed over here", not a person-shaped blob.
+- **Diagonal streaks are the ellipses themselves**, not an object. Seeing the
+  same diagonal repeatedly means one or two links dominate the solution.
+
+Signs something is actually wrong, rather than merely coarse:
+
+- The same link dominates every frame **and flips sign** between frames — that
+  is an unstable link, not a detection.
+- Peak sigma sits near the threshold regardless of whether anyone is present.
+- The strongest links are not the ones whose paths you are crossing.
+
+First things to try: `--window-seconds 10` for more averaging, a longer
+`--calibrate-seconds`, and re-checking that the node positions in the config
+match reality. Wrong positions produce confident, meaningless images.
+
 ## Known limitations
 - With few nodes / a single-AP fan topology (all links sharing one transmitter), spatial resolution is coarse — reconstructs rough "something changed in this direction" rather than a precise position.
 - Reconstructs *change from baseline* (presence/movement), not static room geometry (walls, furniture shape) — that's a fundamentally harder, unsolved problem with this approach.
 - Resolution improves meaningfully with more nodes and, especially, with node-to-node links rather than single-AP fan links, since crossing paths from multiple transmit points disambiguate position much better. Enable `CSI_PROMISCUOUS` to get them.
 - Even with promiscuous capture you get whichever links happen to carry traffic, not a guaranteed set. Full all-pairs coverage (N×(N−1)/2 links) would need a scheduled round-robin where each node broadcasts in its own slot — not implemented.
+- Sensitivity is marginal at 6 nodes: the per-link change from a person is close to the link's resting noise. See [Sensitivity and noise](#sensitivity-and-noise).
+- The baseline drifts as WiFi conditions change over minutes to hours, so an old baseline reads as spurious change. Recalibrate at the start of a session, and after any channel change.

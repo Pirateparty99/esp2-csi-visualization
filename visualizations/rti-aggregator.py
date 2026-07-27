@@ -245,6 +245,22 @@ def main():
         help="Record baseline amplitudes with an EMPTY room",
     )
     parser.add_argument("--calibrate-seconds", type=int, default=20)
+    parser.add_argument(
+        "--window-seconds",
+        type=float,
+        default=5.0,
+        help="Seconds of readings averaged per frame. Noise in the mean falls "
+        "as 1/sqrt(samples), so longer windows detect smaller changes but "
+        "respond more slowly.",
+    )
+    parser.add_argument(
+        "--z-threshold",
+        type=float,
+        default=3.0,
+        help="Standard errors a link must move before it counts as a real "
+        "change. Below this the frame is reported as no significant change "
+        "rather than rendered.",
+    )
     parser.add_argument("--room-width", type=float, default=4.0, help="meters")
     parser.add_argument("--room-height", type=float, default=3.0, help="meters")
     args = parser.parse_args()
@@ -258,6 +274,33 @@ def main():
     baseline = {}
 
     xs, ys = build_room_grid(args.room_width, args.room_height, GRID_RESOLUTION)
+
+    # Node positions must lie inside the grid. Nothing previously checked
+    # this, and the failure is silent and misleading: links anchored outside
+    # the grid still contribute rows to the weight matrix, but their ellipses
+    # fall largely off it, so the reconstruction shows smeared diagonal
+    # streaks that look like structure and track nothing.
+    outside = {
+        mac: pos
+        for mac, pos in {**STATIONS, **TRANSMITTERS}.items()
+        if pos[0] > args.room_width or pos[1] > args.room_height
+        or pos[0] < 0 or pos[1] < 0
+    }
+    if outside:
+        print(
+            f"\n[aggregator] ERROR: {len(outside)} node position(s) fall outside "
+            f"the {args.room_width}m x {args.room_height}m room:"
+        )
+        for mac, pos in sorted(outside.items()):
+            print(f"[aggregator]   {mac} at {pos}")
+        need_w = max(p[0] for p in {**STATIONS, **TRANSMITTERS}.values())
+        need_h = max(p[1] for p in {**STATIONS, **TRANSMITTERS}.values())
+        print(
+            f"[aggregator] Node positions span {need_w:.1f}m x {need_h:.1f}m. "
+            f"Pass at least --room-width {need_w:.1f} --room-height {need_h:.1f}, "
+            f"or correct the positions in {NODES_CONFIG_PATH}."
+        )
+        raise SystemExit(1)
 
     room_mask = build_room_mask(xs, ys, ROOM_POLYGON)
 
@@ -292,11 +335,24 @@ def main():
             amp = amplitude_from_csi(payload.get("csi", []))
             link_amplitudes[link].append(amp)
 
+        # Store spread alongside the mean. Without it there is no way to tell
+        # a real change from this link's ordinary jitter, and CSI amplitude
+        # is noisy enough that the difference matters: measured here, a link's
+        # 5s window mean wanders by ~0.45 on a mean of ~20 with nothing moving.
         for link, amps in link_amplitudes.items():
-            baseline[link] = float(np.mean(amps)) if amps else 0.0
+            if amps:
+                baseline[link] = (float(np.mean(amps)), float(np.std(amps)), len(amps))
+            else:
+                baseline[link] = (0.0, 0.0, 0)
         print(f"[aggregator] Calibration complete. {len(baseline)} links baselined.")
+        noisy = [k for k, v in baseline.items() if v[0] > 0 and v[1] / v[0] > 0.15]
+        if noisy:
+            print(
+                f"[aggregator] NOTE: {len(noisy)}/{len(baseline)} links vary by "
+                f">15% at rest; they will contribute little."
+            )
         with open("rti_baseline.json", "w") as f:
-            json.dump({f"{k[0]}|{k[1]}": v for k, v in baseline.items()}, f, indent=2)
+            json.dump({f"{k[0]}|{k[1]}": list(v) for k, v in baseline.items()}, f, indent=2)
         print("[aggregator] Saved baseline to rti_baseline.json")
         return
 
@@ -306,7 +362,11 @@ def main():
             raw = json.load(f)
         for k, v in raw.items():
             tx_str, rx_str = k.split("|")
-            baseline[(eval(tx_str), eval(rx_str))] = v
+            # Older baselines stored a bare mean; treat their spread as
+            # unknown so they still load.
+            if isinstance(v, (int, float)):
+                v = (float(v), 0.0, 0)
+            baseline[(eval(tx_str), eval(rx_str))] = tuple(v)
         print(
             f"[aggregator] Loaded {len(baseline)} baseline links from rti_baseline.json"
         )
@@ -337,13 +397,45 @@ def main():
                         amp = amplitude_from_csi(payload.get("csi", []))
                         live_amps[link].append(amp)
 
-            if time.time() - last_image_time > 3.0:
-                links = [l for l in live_amps.keys() if l in baseline]
+            if time.time() - last_image_time > args.window_seconds:
+                # Need enough samples for a window mean to mean anything.
+                links = [
+                    l for l in live_amps.keys() if l in baseline and len(live_amps[l]) >= 5
+                ]
                 if len(links) >= 3:
-                    deviations = np.array(
-                        [baseline[l] - float(np.mean(live_amps[l])) for l in links],
-                        dtype=np.float32,
-                    )
+                    # Deviation in standard errors, not raw amplitude.
+                    #
+                    # Raw amplitude cannot be thresholded: links differ in
+                    # how noisy they are, so a quiet link moving slightly and
+                    # a noisy link idling look identical. Dividing by each
+                    # link's own standard error puts them on one scale and
+                    # makes "is this bigger than the jitter" answerable.
+                    zs = []
+                    for l in links:
+                        base_mean, base_std, _ = baseline[l]
+                        vals = live_amps[l]
+                        live_mean = float(np.mean(vals))
+                        # Standard error of this window's mean.
+                        sem = base_std / np.sqrt(len(vals)) if base_std > 0 else 0.0
+                        if sem <= 1e-9:
+                            zs.append(0.0)
+                        else:
+                            zs.append((base_mean - live_mean) / sem)
+                    deviations = np.array(zs, dtype=np.float32)
+                    peak_z = float(np.max(np.abs(deviations))) if len(deviations) else 0.0
+                    if peak_z < args.z_threshold:
+                        # Everything is within its resting jitter. Rendering
+                        # here would auto-scale noise into a confident-looking
+                        # picture, which is worse than saying nothing.
+                        print(
+                            f"\n[aggregator] no significant change "
+                            f"(peak {peak_z:.1f} sigma < {args.z_threshold:.1f}, "
+                            f"{len(links)} links)"
+                        )
+                        live_amps.clear()
+                        last_image_time = time.time()
+                        continue
+
                     W = rti_weight_matrix(links, xs, ys, ELLIPSE_WIDTH)
                     W = W * room_mask  # zero the columns outside the room
                     image = reconstruct_image(W, deviations)
@@ -356,26 +448,35 @@ def main():
                         f"[aggregator] raw deviation stats: min={grid.min():.4f} max={grid.max():.4f} "
                         f"std={grid.std():.4f} range={grid.ptp():.4f}"
                     )
+                    strongest = sorted(
+                        zip(links, deviations), key=lambda p: -abs(p[1])
+                    )[:5]
                     print(
-                        f"[aggregator] link deviations: "
-                        + ", ".join(f"{l}={d:.3f}" for l, d in zip(links, deviations))
+                        "[aggregator] strongest links (sigma): "
+                        + ", ".join(f"{l}={d:+.1f}" for l, d in strongest)
                     )
                     mask_grid = room_mask.reshape(len(xs), len(ys))
-                    # Scale against in-room pixels only; masked ones are
-                    # identically zero and would otherwise skew the range.
-                    inside_vals = grid[mask_grid]
-                    lo = float(inside_vals.min()) if inside_vals.size else 0.0
-                    span = float(inside_vals.ptp()) if inside_vals.size else 0.0
-                    normed = (grid - lo) / (span + 1e-6)
+
+                    # Fixed scale, anchored at zero. Rescaling each frame to
+                    # its own min/max was the other half of "the image changes
+                    # constantly": it stretches whatever is present to full
+                    # contrast, so an idle room and an occupied one look
+                    # equally dramatic. Tying the ramp to a fixed multiple of
+                    # the peak instead means a weak frame renders weakly.
+                    scale = max(abs(float(grid[mask_grid].min())),
+                                abs(float(grid[mask_grid].max())), 1e-9)
                     chars = " .:-=+*#%@"
-                    for row, mrow in zip(normed.T[::-1], mask_grid.T[::-1]):
-                        print(
-                            "".join(
-                                chars[min(int(v * (len(chars) - 1)), len(chars) - 1)]
-                                if inside else " "
-                                for v, inside in zip(row, mrow)
+                    for row, mrow in zip(grid.T[::-1], mask_grid.T[::-1]):
+                        out = []
+                        for v, inside in zip(row, mrow):
+                            if not inside:
+                                out.append(" ")
+                                continue
+                            frac = max(0.0, float(v) / scale)  # attenuation only
+                            out.append(
+                                chars[min(int(frac * (len(chars) - 1)), len(chars) - 1)]
                             )
-                        )
+                        print("".join(out))
                 else:
                     print(
                         f"[aggregator] Only {len(links)} active links with baseline - need >=3 for imaging."
