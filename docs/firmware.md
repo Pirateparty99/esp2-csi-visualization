@@ -16,6 +16,7 @@ first by default, so a stale binary is never silently reflashed; pass
 ./scripts/esp-idf/esp-sta-flash.sh -p /dev/ttyUSB0 --skip-build # skip rebuild
 ./scripts/esp-idf/esp-ap-flash.sh  -p /dev/ttyUSB0              # active_ap
 ./scripts/esp-idf/esp-mesh-flash.sh -p /dev/ttyUSB0             # wifi-mesh
+./scripts/esp-idf/esp-passive-flash.sh -p /dev/ttyUSB0          # passive
 ```
 
 `-p` is optional with a single board attached and **required** with more than

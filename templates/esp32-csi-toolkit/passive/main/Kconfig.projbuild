@@ -44,4 +44,58 @@ menu "ESP32 CSI Tool Config"
             Sending data to an SD card can take time and buffer space.
             If your ESP32 does not have an SD card, there is no reason to use this feature.
             If you do though, the program will be recognize this and not attempt writing to the SD card.
+
+    config PASSIVE_UPLINK
+        bool "Associate to an AP so CSI can be reported over UDP"
+        default "y"
+        help
+            A sniffer in WIFI_MODE_NULL has no IP and therefore no way to
+            report anything off-device except over serial or to an SD card.
+            Enabling this associates as a station purely to carry the UDP
+            uplink; the node still never generates traffic for others to
+            measure, so it stays receive-only for sensing purposes.
+
+            Trade-off: an associated station follows its AP's channel, so
+            WIFI_CHANNEL is no longer free and must match the AP. Disable this
+            to keep WIFI_MODE_NULL and the ability to sniff any channel,
+            including ones with no AP at all.
+
+    config ESP_WIFI_SSID
+        depends on PASSIVE_UPLINK
+        string "WiFi SSID"
+        default "myssid"
+        help
+            SSID of the AP to associate with for the UDP uplink.
+
+    config ESP_WIFI_PASSWORD
+        depends on PASSIVE_UPLINK
+        string "WiFi Password"
+        default "mypassword"
+
+    config CHANNEL_SURVEY
+        depends on PASSIVE_UPLINK
+        bool "Log a 2.4GHz channel survey at boot"
+        default "y"
+        help
+            Scans all channels once at startup and logs how busy each is.
+            Advisory only; the channel is never changed.
+
+    config SEND_CSI_TO_UDP
+        depends on PASSIVE_UPLINK && SHOULD_COLLECT_CSI
+        bool "Send CSI data to UDP"
+        default "y"
+        help
+            Sends CSI data as JSON over UDP to UDP_TARGET_IP:UDP_TARGET_PORT.
+
+    config UDP_TARGET_IP
+        depends on SEND_CSI_TO_UDP
+        string "UDP target IP address"
+        default "192.168.4.1"
+        help
+            IP address of the collector, as seen from this node's network.
+
+    config UDP_TARGET_PORT
+        depends on SEND_CSI_TO_UDP
+        int "UDP target port"
+        default 5566
 endmenu

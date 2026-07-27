@@ -1,2 +1,0 @@
-- Need to add UDP forwarding to main.cc
-- Need to add "SEND_CSI_TO_UDP" option(s) to Kconfig.projbuild
