@@ -63,6 +63,32 @@ Format:
 | `stations` | Each receiving node's IP and measured `(x, y)` position — nodes that report their own captured CSI back to the aggregator |
 | `transmitters` | Each transmitting node's MAC address and measured `(x, y)` position — devices whose frames get sniffed and reported by stations. For a plain single-AP setup this is one entry (the AP's MAC). With `CSI_PROMISCUOUS` (or a mesh), every node needs an entry here **and** in `stations`, with matching positions, since each node both transmits and receives. |
 
+### Rooms that are not rectangles
+
+`--room-width` / `--room-height` define a bounding rectangle. For an L-shape,
+an alcove, a cut corner, or any other non-rectangular floor, add an optional
+`room_polygon` to the config: the vertices of the floor outline, in order,
+in the same coordinate frame as the node positions.
+
+```json
+{
+  "room_polygon": [[0,0], [7,0], [7,5], [4,5], [4,8], [0,8]]
+}
+```
+
+That example is a 7×8 m bounding box with a 3×3 m bite taken out of the
+top-right corner. Set `--room-width 7 --room-height 8` to match the bounding
+box; pixels outside the outline are **excluded from the reconstruction**, not
+merely hidden, so no attenuation is attributed to space that cannot contain
+anything. They render blank.
+
+Any simple polygon works, including concave ones. Omit `room_polygon` entirely
+and the whole rectangle is treated as floor, which is the previous behaviour.
+
+Walls and fixed furniture inside the outline do **not** need modelling — RTI
+reconstructs *change* from the empty-room baseline, so anything static is
+cancelled by calibration.
+
 Other tunable constants (top of `visualizations/rti-aggregator.py`):
 
 | Variable | Description |

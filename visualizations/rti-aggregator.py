@@ -85,10 +85,20 @@ def load_nodes_config(path):
     transmitters = {
         mac.lower(): tuple(pos) for mac, pos in raw.get("transmitters", {}).items()
     }
-    return stations, transmitters
+    # Optional outline of the floor for non-rectangular rooms. A list of
+    # [x, y] vertices in the same coordinate frame as the node positions,
+    # traced around the wall in order. Omit it and the whole bounding
+    # rectangle is treated as floor.
+    room_polygon = [tuple(pt) for pt in raw.get("room_polygon", [])]
+    if room_polygon and len(room_polygon) < 3:
+        raise ValueError(
+            f"'room_polygon' in {path} needs at least 3 vertices, got "
+            f"{len(room_polygon)}."
+        )
+    return stations, transmitters, room_polygon
 
 
-STATIONS, TRANSMITTERS = load_nodes_config(NODES_CONFIG_PATH)
+STATIONS, TRANSMITTERS, ROOM_POLYGON = load_nodes_config(NODES_CONFIG_PATH)
 IP_TO_POS = STATIONS
 MAC_TO_POS = TRANSMITTERS
 
@@ -142,6 +152,37 @@ def build_room_grid(room_width, room_height, resolution):
     xs = np.arange(0, room_width, resolution)
     ys = np.arange(0, room_height, resolution)
     return xs, ys
+
+
+def build_room_mask(xs, ys, polygon):
+    """Boolean mask over the grid: True where a pixel is inside the room.
+
+    Rooms are rarely rectangles. The grid stays a rectangle -- it is just an
+    array -- and this marks which of its pixels are actually floor. Pixels
+    outside are excluded from the reconstruction rather than merely hidden,
+    so no signal is attributed to space that cannot contain anything.
+
+    Ray casting, so any simple polygon works: L-shapes, alcoves, cut corners.
+    No extra dependency.
+    """
+    px, py = np.meshgrid(xs, ys, indexing="ij")
+    px = px.ravel()
+    py = py.ravel()
+
+    if not polygon:
+        return np.ones(px.size, dtype=bool)
+
+    inside = np.zeros(px.size, dtype=bool)
+    n = len(polygon)
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i + 1) % n]
+        # Does a ray to +x from the pixel cross this edge?
+        straddles = (y1 > py) != (y2 > py)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            x_cross = (x2 - x1) * (py - y1) / (y2 - y1 + 1e-12) + x1
+        inside ^= straddles & (px < x_cross)
+    return inside
 
 
 def rti_weight_matrix(links, xs, ys, ellipse_width):
@@ -218,6 +259,18 @@ def main():
 
     xs, ys = build_room_grid(args.room_width, args.room_height, GRID_RESOLUTION)
 
+    room_mask = build_room_mask(xs, ys, ROOM_POLYGON)
+
+    if ROOM_POLYGON:
+
+        print(
+
+            f"[aggregator] Room outline: {len(ROOM_POLYGON)} vertices, "
+
+            f"{int(room_mask.sum())}/{room_mask.size} pixels inside"
+
+        )
+
     if args.calibrate:
         print(
             f"[aggregator] CALIBRATING for {args.calibrate_seconds}s — keep the room EMPTY."
@@ -292,6 +345,7 @@ def main():
                         dtype=np.float32,
                     )
                     W = rti_weight_matrix(links, xs, ys, ELLIPSE_WIDTH)
+                    W = W * room_mask  # zero the columns outside the room
                     image = reconstruct_image(W, deviations)
                     grid = image.reshape(len(xs), len(ys))
                     # Print a crude ASCII heatmap for a quick sanity check
@@ -306,13 +360,20 @@ def main():
                         f"[aggregator] link deviations: "
                         + ", ".join(f"{l}={d:.3f}" for l, d in zip(links, deviations))
                     )
-                    normed = (grid - grid.min()) / (grid.ptp() + 1e-6)
+                    mask_grid = room_mask.reshape(len(xs), len(ys))
+                    # Scale against in-room pixels only; masked ones are
+                    # identically zero and would otherwise skew the range.
+                    inside_vals = grid[mask_grid]
+                    lo = float(inside_vals.min()) if inside_vals.size else 0.0
+                    span = float(inside_vals.ptp()) if inside_vals.size else 0.0
+                    normed = (grid - lo) / (span + 1e-6)
                     chars = " .:-=+*#%@"
-                    for row in normed.T[::-1]:
+                    for row, mrow in zip(normed.T[::-1], mask_grid.T[::-1]):
                         print(
                             "".join(
                                 chars[min(int(v * (len(chars) - 1)), len(chars) - 1)]
-                                for v in row
+                                if inside else " "
+                                for v, inside in zip(row, mrow)
                             )
                         )
                 else:
