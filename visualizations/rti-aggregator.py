@@ -185,14 +185,41 @@ def build_room_mask(xs, ys, polygon):
     return inside
 
 
-def locate_change(grid, xs, ys, mask_grid):
-    """Summarize where the attenuation sits: (peak_xy, centroid_xy, spread_m).
+def sensitivity_centroid(W, xs, ys, mask_grid):
+    """Where a spatially uniform change would appear to be.
+
+    Coverage is not uniform: pixels crossed by many link ellipses accumulate
+    far more weight than pixels at the edges, so the reconstruction puts mass
+    near the middle of the link geometry no matter where the real change is.
+    Measured on a 6-node layout the reported centroid stayed within about a
+    metre of the array centre across every frame, tracking nothing.
+
+    The centroid of the summed weights is that bias: the answer the geometry
+    gives when the input carries no positional information. Reporting a
+    measured centroid relative to this point is what makes it meaningful.
+    """
+    px, py = np.meshgrid(xs, ys, indexing="ij")
+    sens = W.sum(axis=0).reshape(len(xs), len(ys))
+    sens = np.where(mask_grid, np.abs(sens), 0.0)
+    total = float(sens.sum())
+    if total <= 0:
+        return None
+    return (float((sens * px).sum() / total), float((sens * py).sum() / total))
+
+
+def locate_change(grid, xs, ys, mask_grid, reference=None):
+    """Summarize where the attenuation sits.
+
+    Returns (peak_xy, centroid_xy, spread_m, offset_xy), where offset is the
+    centroid measured from `reference` -- the position a uniform change would
+    produce. The raw centroid is dominated by coverage geometry; the offset is
+    the part that responds to where something actually is.
 
     Only positive values count. RTI models a body as *attenuating* a link, so
     negative pixels are the reconstruction's undershoot and including them
     drags the centroid toward nothing physical.
 
-    Spread is the intensity-weighted RMS distance from the centroid. It is the
+    Spread is the intensity-weighted RMS distance from the centroid, and is the
     honest part of the answer: with ~20 links the reconstruction smears along
     the link ellipses, so a spread comparable to the room size means "a change
     somewhere in this direction", not a located object.
@@ -201,7 +228,7 @@ def locate_change(grid, xs, ys, mask_grid):
     vals = np.where(mask_grid & (grid > 0), grid, 0.0)
     total = float(vals.sum())
     if total <= 0:
-        return None, None, None
+        return None, None, None, None
 
     peak_idx = np.unravel_index(np.argmax(vals), vals.shape)
     peak = (float(px[peak_idx]), float(py[peak_idx]))
@@ -211,7 +238,11 @@ def locate_change(grid, xs, ys, mask_grid):
 
     d2 = (px - cx) ** 2 + (py - cy) ** 2
     spread = float(np.sqrt((vals * d2).sum() / total))
-    return peak, (cx, cy), spread
+
+    offset = None
+    if reference is not None:
+        offset = (cx - reference[0], cy - reference[1])
+    return peak, (cx, cy), spread, offset
 
 
 def describe_direction(cx, cy, room_width, room_height):
@@ -708,13 +739,29 @@ def main():
                     )
                     mask_grid = room_mask.reshape(len(xs), len(ys))
 
-                    peak, centroid, spread = locate_change(
-                        grid, xs, ys, mask_grid
+                    reference = sensitivity_centroid(W, xs, ys, mask_grid)
+                    peak, centroid, spread, offset = locate_change(
+                        grid, xs, ys, mask_grid, reference
                     )
                     if centroid is not None:
-                        bearing = describe_direction(
-                            centroid[0], centroid[1], args.room_width, args.room_height
-                        )
+                        # Bearing comes from the offset, not the raw centroid.
+                        # The raw centroid sits wherever coverage is densest
+                        # regardless of the input, so a bearing taken from it
+                        # says the same thing every frame.
+                        if offset is not None:
+                            odist = float(np.hypot(offset[0], offset[1]))
+                            bearing = describe_direction(
+                                reference[0] + offset[0] * 3.0,
+                                reference[1] + offset[1] * 3.0,
+                                args.room_width,
+                                args.room_height,
+                            )
+                        else:
+                            odist = 0.0
+                            bearing = describe_direction(
+                                centroid[0], centroid[1],
+                                args.room_width, args.room_height,
+                            )
                         # Spread against room scale decides how much to claim.
                         room_scale = np.hypot(args.room_width, args.room_height)
                         if spread < room_scale * 0.15:
@@ -723,11 +770,19 @@ def main():
                             quality = "approximate"
                         else:
                             quality = "direction only"
+                        # An offset far below the spread is not a direction,
+                        # it is the reconstruction's residual wobble.
+                        if offset is None or odist < spread * 0.15:
+                            where = "no directional bias (change spread evenly)"
+                        else:
+                            where = (
+                                f"shifted {odist:.1f}m {bearing} of array centre "
+                                f"({reference[0]:.1f}, {reference[1]:.1f})m"
+                            )
                         print(
                             f"[aggregator] >>> PRESENCE DETECTED  "
-                            f"peak {peak_z:.1f} sigma | "
-                            f"centre of change ~({centroid[0]:.1f}, {centroid[1]:.1f})m "
-                            f"[{bearing}] | strongest ({peak[0]:.1f}, {peak[1]:.1f})m | "
+                            f"peak {peak_z:.1f} sigma | {where} | "
+                            f"strongest ({peak[0]:.1f}, {peak[1]:.1f})m | "
                             f"spread {spread:.1f}m -> {quality}"
                         )
                     else:

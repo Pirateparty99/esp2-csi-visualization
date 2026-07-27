@@ -195,17 +195,36 @@ picture, so an idle room and an occupied one look equally dramatic. Saying
 Frames that clear the threshold print a one-line summary above the image:
 
 ```
->>> PRESENCE DETECTED  peak 6.9 sigma | centre of change ~(2.7, 4.8)m [centre]
-    | strongest (2.3, 7.0)m | spread 2.5m -> approximate
+>>> PRESENCE DETECTED  peak 20.6 sigma | shifted 0.9m far of array centre (3.4, 4.0)m
+    | strongest (3.9, 7.4)m | spread 2.4m -> approximate
 ```
 
 | Field | Meaning |
 |---|---|
 | `peak N sigma` | Largest single-link change, in standard errors |
-| `centre of change` | Intensity-weighted centroid of the attenuation, in metres |
-| `[bearing]` | That centroid relative to room centre — `near`/`far`, `left`/`right`, or `centre` |
+| `shifted Nm <bearing>` | Displacement of the attenuation centroid from the array centre |
+| `of array centre (x, y)` | Where a uniform change would appear — the coverage bias, not a measurement |
 | `strongest` | The single brightest pixel |
 | `spread` | RMS extent of the attenuation around the centroid |
+
+**Position is reported as a displacement, not an absolute point.** Coverage is
+not uniform: pixels crossed by many link ellipses accumulate far more weight
+than pixels at the edges, so the raw centroid sits near the middle of the link
+geometry no matter where the change is. On this 6-node layout the raw centroid
+stayed within a metre of (3.2, 4.3) across every frame while the subject moved
+around — it was reporting the array, not the person.
+
+The fix is to compute where a spatially uniform change *would* appear — the
+centroid of the summed link weights — and report the measured centroid relative
+to that. The displacement is the part that responds to position. When it falls
+below 15% of the spread the reading becomes:
+
+```
+>>> PRESENCE DETECTED  peak 4.0 sigma | no directional bias (change spread evenly)
+```
+
+which is the honest answer when the reconstruction has no positional
+information to give.
 
 **`spread` is the field that says how much to believe the position**, and it
 drives the trailing verdict:
